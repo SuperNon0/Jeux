@@ -58,7 +58,9 @@ if [[ $(/opt/jeux-node/bin/node -v 2>/dev/null || true) != "$version" ]]; then
 fi
 
 install -d -m 0755 "$nouvelle"
-if [[ -f /tmp/jeux-install.tar.gz ]]; then
+archive_locale=0
+if [[ $ref == main && -f /tmp/jeux-install.tar.gz ]]; then
+  archive_locale=1
   tar -xzf /tmp/jeux-install.tar.gz -C "$nouvelle" --no-same-owner --no-same-permissions
 else
   curl --fail --silent --show-error --location --retry 4 --max-time 120 \
@@ -140,5 +142,5 @@ curl --fail --silent --show-error --max-time 5 --retry 8 --retry-connrefused \
     "http://127.0.0.1:$port/sante"
 printf '\n'
 bascule=0
-rm -f /tmp/jeux-install.tar.gz
+if (( archive_locale )); then rm -f /tmp/jeux-install.tar.gz; fi
 systemctl enable --now jeux-update.path
