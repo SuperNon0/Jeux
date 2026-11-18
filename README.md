@@ -107,9 +107,24 @@ L’interface utilise le [kit Encre](https://github.com/SuperNon0/Biblioth-que-d
 
 ## Remplacer les annonces
 
-Les 24 annonces fournies sont dans [public/audio](public/audio). Pour modifier une annonce, remplace le fichier par un autre MP3 du même nom. Par exemple, remplace `le-village-sendort.mp3` pour l’annonce de début de nuit ou `election-maire.mp3` pour l’ouverture de l’élection. Le serveur lit les fichiers sur disque et les navigateurs vérifient leur fraîcheur. Aucun service de synthèse n’est requis pendant les parties.
+Les annonces fournies sont dans [public/audio](public/audio). Pour modifier une annonce, remplace le fichier par un autre MP3 du même nom. Par exemple, remplace `le-village-sendort.mp3` pour l’annonce de début de nuit ou `election-maire.mp3` pour l’ouverture de l’élection. Le serveur lit les fichiers sur disque et les navigateurs vérifient leur fraîcheur. Aucun service de synthèse n’est requis pendant les parties.
 
 Le mode discret joue les transitions communes et masque les appels individuels de nuit. Les consignes des rôles concernés restent disponibles sur leurs écrans privés.
+
+### Annonces ajoutées en 0.2.1
+
+Les 24 enregistrements d’origine sont conservés. Les annonces ci-dessous sont fournies avec la voix française Tom de Piper. Tu peux les remplacer depuis le panneau Administration.
+
+| Nom du fichier | Phrase |
+| --- | --- |
+| `fin-voyante.mp3` | La Voyante se rendort. |
+| `fin-loups.mp3` | Les Loups-Garous se rendorment. |
+| `fin-sorciere.mp3` | La Sorcière se rendort. |
+| `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
+| `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
+| `egalite-vote-hote.mp3` | L’égalité persiste. Relancez le vote ou tirez au sort parmi les personnes à égalité. |
+| `tir-chasseur.mp3` | Le Chasseur a utilisé son dernier tir. Consultez le résultat sur votre téléphone. |
+| `match-nul.mp3` | La partie se termine. Aucun camp ne survit. |
 
 ## Vérifier
 

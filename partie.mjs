@@ -47,6 +47,7 @@ export class Partie {
     return Object.assign(Object.create(Partie.prototype), etat, {
       joueurs, config, cartes: new Map(etat.cartes), vivants: new Set(etat.vivants),
       historiques: new Map(etat.historiques),
+      finAnnoncePhase: etat.finAnnoncePhase ?? etat.annonces.length,
       tour: { ...etat.tour, reponses: new Map(etat.tour.reponses) },
     });
   }
@@ -99,7 +100,7 @@ export class Partie {
   passer(absents) {
     if (!absents.length) throw new Error('Aucune action absente à passer pour le moment.');
     const { type, acteurs, reponses } = this.tour;
-    if (['voyante', 'sorciere'].includes(type)) this.prochainRole();
+    if (['voyante', 'sorciere'].includes(type)) this.terminerRoleNocturne(type);
     else if (type === 'chasseur' || type === 'succession') this.resoudreEffets();
     else if (type === 'departage') this.eliminerAuVote(tirerAuSort(this.tour.cibles));
     else if (['distribution', 'loups', 'election', 'vote'].includes(type)) {
@@ -117,8 +118,9 @@ export class Partie {
     const duree = type === 'debat' ? this.config.debatSecondes
       : ['election', 'vote'].includes(type) ? this.config.voteSecondes : 0;
     this.tour = { type, acteurs, cibles, numero: ++this.numero, reponses: new Map(), debut,
-      echeance: duree ? debut + duree * 1000 : null };
+      echeance: duree ? debut + duree * 1000 : null, annonceDepuis: this.finAnnoncePhase ?? 0 };
     if (fichier) this.annoncer(fichier);
+    this.finAnnoncePhase = this.annonces.length;
   }
 
   nom(id) { return this.joueurs.find(joueur => joueur.id === id)?.nom; }
@@ -146,6 +148,11 @@ export class Partie {
     this.annoncer(victimes.length ? 'nuit-avec-victimes' : 'nuit-sans-victime',
       victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'La nuit n’a fait aucune victime.');
     this.eliminer(victimes.map(id => [id, id === this.victimeLoups ? 'loups' : 'poison']), 'debat');
+  }
+
+  terminerRoleNocturne(role) {
+    if (!this.config.discret) this.annoncer(`fin-${role}`);
+    this.prochainRole();
   }
 
   debat() { this.phase('debat', this.animateurs(), [], 'debut-debat'); }
@@ -196,7 +203,7 @@ export class Partie {
     const loups = [...this.vivants].filter(id => this.cartes.get(id) === 'loups').length;
     if (loups === 0 || loups * 2 >= this.vivants.size) {
       this.gagnant = !this.vivants.size ? 'egalite' : loups ? 'loups' : 'village';
-      this.phase('fin', [], [], this.gagnant === 'egalite' ? undefined : `victoire-${this.gagnant}`);
+      this.phase('fin', [], [], this.gagnant === 'egalite' ? 'match-nul' : `victoire-${this.gagnant}`);
       return;
     }
     if (this.suite === 'debat') this.debat();
@@ -235,7 +242,7 @@ export class Partie {
       }
       if (choix.soin) { this.potions.soin = false; this.victimeLoups = null; }
       if (choix.poison) { this.potions.poison = false; this.poison = choix.poison; }
-      this.prochainRole();
+      this.terminerRoleNocturne(type);
       return;
     }
     if (cibles.length && (!cibles.includes(choix) || (type === 'voyante' && choix === id))) {
@@ -252,12 +259,12 @@ export class Partie {
       case 'distribution': this.nuit(); break;
       case 'voyante':
         this.historiques.get(id).push({ nuit: this.jour, nom: this.nom(choix), role: this.cartes.get(choix) });
-        this.prochainRole();
+        this.terminerRoleNocturne(type);
         break;
       case 'loups': {
         const premiers = candidatsEnTete(reponses);
         this.victimeLoups = premiers.length ? tirerAuSort(premiers) : null;
-        this.prochainRole();
+        this.terminerRoleNocturne(type);
         break;
       }
       case 'election': {
@@ -265,7 +272,7 @@ export class Partie {
         if (premiers.length > 1) this.phase('egaliteElection', this.animateurs(), premiers, 'egalite-election');
         else {
           if (premiers.length) this.elire(premiers[0]);
-          else this.annoncer(null, 'Aucun vote à l’élection du maire.');
+          else this.annoncer('aucun-vote-maire', 'Aucun vote à l’élection du maire.');
           this.voteElimination();
         }
         break;
@@ -273,21 +280,21 @@ export class Partie {
       case 'vote': {
         const premiers = candidatsEnTete(reponses, this.maire);
         if (!premiers.length) {
-          this.annoncer(null, 'Aucun vote reçu. Personne n’est éliminé.');
+          this.annoncer('aucun-vote-elimination', 'Aucun vote reçu. Personne n’est éliminé.');
           this.nuit();
         } else if (premiers.length === 1) this.eliminerAuVote(premiers[0]);
         else {
           this.annoncer('egalite-elimination');
           if (this.maire) this.phase('departage', [this.maire], premiers, 'departage-maire');
           else if (this.tour.relance) {
-            this.phase('egaliteVote', this.animateurs(), premiers);
+            this.phase('egaliteVote', this.animateurs(), premiers, 'egalite-vote-hote');
           } else this.vote('vote', premiers, 'second-tour');
         }
         break;
       }
       case 'departage': this.eliminerAuVote(choix); break;
       case 'chasseur':
-        this.annoncer(null, `Le Chasseur a emporté ${this.nom(choix)}.`);
+        this.annoncer('tir-chasseur', `Le Chasseur a emporté ${this.nom(choix)}.`);
         this.enlever(choix, 'chasseur');
         this.resoudreEffets();
         break;
@@ -305,7 +312,7 @@ export class Partie {
       phase: nuit && !concerne ? 'nuit' : type, pause: this.pause,
       temps: this.tour.echeance ? { echeance: this.tour.echeance, pauseDepuis: this.pauseDepuis } : undefined,
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
-      numero: peutAgir ? numero : undefined, gagnant: this.gagnant, annonces: this.annonces,
+      numero: peutAgir ? numero : undefined, gagnant: this.gagnant, annonces: this.annonces, annonceDepuis: id === this.config.hote ? this.tour.annonceDepuis : undefined,
       progression: ['distribution', 'election', 'vote'].includes(type)
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),

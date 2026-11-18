@@ -18,7 +18,7 @@ const roles = {
 const phases = {
   distribution: ['Distribution', 'Découvre ton rôle', 'Retourne ta carte à l’abri des regards, puis indique que tu es prêt.', 'layers'],
   nuit: ['Nuit', 'Le village dort', 'Les personnes appelées agissent sur leur téléphone. La suite s’affichera ici.', 'moon'],
-  voyante: ['Nuit', 'Découvre un rôle', 'Choisis une personne à examiner. La révélation sera visible dans ton journal privé.', 'eye'],
+  voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
   loups: ['Nuit', 'Choisissez votre cible', 'Vote pour la personne que ta meute attaquera cette nuit.', 'moon'],
   sorciere: ['Nuit', 'Choisis tes potions', 'Tu peux garder tes potions pour une autre nuit.', 'sparkle'],
   debat: ['Jour', 'Le village débat', 'Discutez à voix haute. L’hôte ouvre le vote quand tout le monde est prêt.', 'chat'],
@@ -43,6 +43,8 @@ const enInvite = hebergement.mode === 'invite';
 const enHote = hebergement.mode === 'hote';
 const cleReprise = code => `jeux-reprise-${code}`;
 const lecteur = new Audio();
+// Deux échantillons silencieux amorcent le lecteur pendant le geste de l’hôte.
+const silence = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQIAAACAgA==';
 const mouvementReduit = matchMedia('(prefers-reduced-motion: reduce)');
 const sauvegarde = {
   lire(cle) { try { return localStorage.getItem(cle); } catch { return null; } },
@@ -77,6 +79,7 @@ let contexteAudio;
 const gainsAudio = new WeakMap();
 let choixCible = { numero: undefined, valeur: null };
 let son = false, lecture = false, dernierSon = 0, piste = 0, file = [];
+let reprendrePiste;
 let renduPage = '';
 let theme = sauvegarde.lire('jeux-theme');
 theme = { clair: 'light', sombre: 'dark', light: 'light', dark: 'dark', auto: 'auto' }[theme] ?? 'auto';
@@ -172,24 +175,29 @@ function reglerVolume(media, volume) {
 }
 
 function stopperNarration() {
+  reprendrePiste = null;
   piste++;
   lecteur.pause();
   lecture = false;
   file = [];
 }
 
+function annoncesSonores(annonces, depuis) {
+  return annonces.filter(a => a.id > depuis && /^[a-z-]+$/.test(a.fichier ?? '')).map(a => a.fichier);
+}
+
 function pisteSuivante() {
-  if (!son || lecture || !file.length) return;
+  if (!son || lecture || !file.length || etat?.partie?.pause) return;
   const id = ++piste;
   const evenement = file.shift();
-  const fichier = configurationSon.associations[evenement] ?? `${evenement}.mp3`;
+  const fichier = evenement ? configurationSon.associations[evenement] ?? `${evenement}.mp3` : null;
   lecture = true;
   reglerVolume(lecteur, configurationSon.volume);
-  lecteur.src = `/audio/${encodeURIComponent(fichier)}`;
+  lecteur.src = fichier ? `/audio/${encodeURIComponent(fichier)}` : silence;
   lecteur.onended = () => terminer();
   lecteur.onerror = () => terminer(true);
-  lecteur.play().catch(erreurLecture => {
-    if (id !== piste || !lecture) return;
+  reprendrePiste = () => lecteur.play().catch(erreurLecture => {
+    if (id !== piste || !lecture || (etat?.partie?.pause && erreurLecture.name === 'AbortError')) return;
     if (erreurLecture.name === 'NotAllowedError') {
       son = false;
       stopperNarration();
@@ -197,11 +205,13 @@ function pisteSuivante() {
       afficher();
     } else terminer(true);
   });
+  reprendrePiste();
 
   function terminer(echec) {
     if (id !== piste || !lecture) return;
     lecture = false;
-    if (echec) afficherAvis(`Annonce indisponible : ${fichier}`, 4000);
+    reprendrePiste = null;
+    if (echec && fichier) afficherAvis(`Annonce indisponible : ${fichier}`, 4000);
     pisteSuivante();
   }
 }
@@ -215,15 +225,21 @@ function actualiser(nouveau) {
     revelee = false;
     choixCible = { numero: undefined, valeur: null };
     dernierSon = 0;
-    if (precedente) stopperNarration();
+    if (precedente && !precedente.gagnant) stopperNarration();
     if (partie) zone = 'partie';
     if (!partie && ['carte', 'journal'].includes(zone)) zone = 'partie';
   }
   const annonces = partie?.annonces ?? [];
   const recentes = annonces.filter(a => a.id > dernierSon);
-  if (son && nouveau.hote && !partie?.pause) {
-    file.push(...recentes.filter(a => /^[a-z-]+$/.test(a.fichier ?? '')).map(a => a.fichier));
-    pisteSuivante();
+  const revelation = precedente && precedente.id === partie?.id && partie.historique.length > precedente.historique.length
+    ? partie.historique.at(-1) : null;
+  etat = nouveau;
+  if (son && nouveau.hote) {
+    file.push(...annoncesSonores(annonces, dernierSon));
+    if (partie?.pause) {
+      if (!precedente?.pause && lecture) lecteur.pause();
+    } else if (lecture && precedente?.pause) reprendrePiste?.();
+    else pisteSuivante();
   }
   const maire = precedente?.id === partie?.id && recentes.findLast(a => ['maire-elu', 'nouveau-maire'].includes(a.fichier));
   if (maire) {
@@ -233,9 +249,9 @@ function actualiser(nouveau) {
     minuterieMaire = setTimeout(() => { nomination.hidden = true; }, 4500);
   }
   dernierSon = annonces.at(-1)?.id ?? 0;
-  etat = nouveau;
   memoriser(nouveau.resume);
   afficher();
+  if (revelation) ouvrirFeuille('revelation', revelation);
 }
 
 async function synchroniser() {
@@ -469,6 +485,24 @@ function choixJoueurs(p) {
     <button class="btn pri" data-envoi>${icone('check', 18)}${textes[p.phase]}</button></form>`;
 }
 
+function ciblesVoyante(p) {
+  return `<div class="liste-cibles">
+    <p class="soft">Touche un joueur pour révéler sa carte.</p>
+    ${p.action.cibles.map(id => {
+      const nom = echapper(etiquette(id));
+      return `<button type="button" class="cible cible-examen" data-action="agir" data-numero="${p.numero}"
+        data-choix="${id}" aria-label="Examiner ${nom}">
+        <span class="avatar">${echapper(initiales(etiquette(id)))}</span><strong>${nom}</strong>${icone('eye', 18)}</button>`;
+    }).join('')}
+  </div>`;
+}
+
+function boutonRevelation(p) {
+  const revelation = p.historique.at(-1);
+  if (!revelation || revelation.nuit !== p.jour) return '';
+  return action('Revoir la carte révélée', 'eye', 'revelation', '', `data-index="${p.historique.length - 1}"`);
+}
+
 function commandes(p) {
   if (p.pause) return '';
   if (!p.action) {
@@ -481,6 +515,7 @@ function commandes(p) {
   if (p.phase === 'distribution') {
     return `<div class="actions">${action('Voir ma carte', 'eye', 'ouvrir-carte')}${agir('Je suis prêt', 'check')}</div>`;
   }
+  if (p.phase === 'voyante') return ciblesVoyante(p);
   if (p.phase === 'debat') return agir('Ouvrir le vote', 'arrow');
   if (['egaliteElection', 'egaliteVote'].includes(p.phase)) {
     return `<p class="soft">${p.action.cibles.map(id => echapper(etiquette(id))).join(' · ')}</p>
@@ -500,8 +535,9 @@ function journal(p) {
   const prive = p.historique;
   const evenements = p.annonces.filter(a => a.message).reverse();
   return `<div class="pile"><section class="panneau"><h2 class="ttl">Tes révélations</h2>
-    ${prive.length ? `<ol class="journal-liste">${[...prive].reverse().map(a => `<li>${icone('lock', 18)}
-      <div><strong>${echapper(a.nom)} · ${roles[a.role].nom}</strong><small class="muted">Nuit ${a.nuit}</small></div></li>`).join('')}</ol>`
+    ${prive.length ? `<ol class="journal-liste">${[...prive].reverse().map((a, index) => `<li>${icone('lock', 18)}
+      <div><strong>${echapper(a.nom)} · ${roles[a.role].nom}</strong><small class="muted">Nuit ${a.nuit}</small>
+      ${action('Voir la carte', 'eye', 'revelation', 'gh', `data-index="${prive.length - 1 - index}"`)}</div></li>`).join('')}</ol>`
       : '<p class="soft">Tes révélations de Voyante apparaîtront ici.</p>'}</section>
     <section class="panneau"><h2 class="ttl">Journal du village</h2>
       ${evenements.length ? `<ol class="journal-liste">${evenements.map(a => `<li>${icone('dot', 18)}<span>${echapper(a.message)}</span></li>`).join('')}</ol>`
@@ -550,6 +586,8 @@ function vuePhase(p) {
     ${p.pause ? `<p class="notice">${icone('clock', 18)}Partie en pause</p>` : ''}
     ${!animateurPresent ? `<p class="notice avertissement">${icone('alert', 18)}Le salon attend un animateur.</p>` : ''}
     ${commandes(p)}
+    ${boutonRevelation(p)}
+    ${p.phase === 'distribution' && etat.hote ? boutonSon() : ''}
     ${etat.anime ? `<div class="actions commandes-phase">
       ${action(p.pause ? 'Reprendre' : 'Mettre en pause', p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}
       ${p.peutProlonger ? action('+30 s de débat', 'plus', 'prolonger', 'gh') : ''}
@@ -566,7 +604,7 @@ function partie() {
     <div class="grille-partie"><div class="pile">
       ${zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p)}
     </div><div class="pile">${panneauJoueurs(p)}
-      ${etat.hote ? `<section class="panneau commandes-salon"><div><h2 class="ttl">Narration ${aide('narration', 'Narration', 'Active le son sur un téléphone pour que les annonces soient diffusées à toute la table.')}</h2></div>${boutonSon()}</section>` : ''}
+      ${etat.hote && (p.phase !== 'distribution' || zone !== 'partie') ? `<section class="panneau commandes-salon"><div><h2 class="ttl">Narration ${aide('narration', 'Narration', 'Active le son sur un téléphone pour que les annonces soient diffusées à toute la table.')}</h2></div>${boutonSon()}</section>` : ''}
     </div></div>`;
 }
 
@@ -884,6 +922,15 @@ function contenuFeuille(type, contexte) {
       <label class="champ-jeu">Ton ancien pseudo<select name="joueur" required><option value="">Choisis ton pseudo</option>
       ${(contexte ?? []).map(joueur => `<option value="${joueur.id}">${echapper(joueur.nom)}</option>`).join('')}</select></label>
       <button class="btn pri" data-envoi>${icone('rotate', 18)}Demander la reprise</button></form>`];
+    case 'revelation': {
+      const { nom, role } = contexte;
+      return ['Carte révélée', `<section class="fiche-revelation">
+        ${pastille('Révélation privée', 'lock')}
+        <p class="soft">${echapper(nom)}</p><h3 class="ttl">${roles[role].nom}</h3>
+        ${art(role)}
+        <p class="soft">Camp ${roles[role].camp}</p>
+        ${action('Continuer', 'arrow', 'fermer', 'pri')}</section>`];
+    }
     case 'role': {
       const role = roles[contexte];
       return [role.nom, `<div class="fiche-role">${art(contexte)}<div><p class="lbl-mono">Camp ${role.camp}</p><p>${role.pouvoir}</p></div></div>`];
@@ -1184,6 +1231,11 @@ document.addEventListener('click', event => {
     return;
   }
   if (id === 'ouvrir-carte') return naviguer('carte');
+  if (id === 'revelation') {
+    const revelation = etat?.partie?.historique[Number(cible.dataset.index)];
+    if (revelation) ouvrirFeuille('revelation', revelation);
+    return;
+  }
   if (id === 'fermer') return fermerFeuille();
   if (['creer', 'rejoindre', 'apparence', 'plus', 'regles', 'invitation', 'role', 'rechercher', 'cohote'].includes(id)) {
     return ouvrirFeuille(id, cible.dataset.role);
@@ -1207,7 +1259,11 @@ document.addEventListener('click', event => {
   if (id === 'son') {
     son = !son;
     if (son) {
-      file.push(etat.partie?.annonces.findLast(a => a.fichier)?.fichier ?? 'le-village-sendort');
+      const partie = etat.partie;
+      if (partie) {
+        const depuis = partie.annonceDepuis ?? Math.max(0, partie.annonces.length - 1);
+        file.push(...annoncesSonores(partie.annonces, depuis));
+      } else file.push(null);
       pisteSuivante();
     } else stopperNarration();
     afficher();

@@ -83,7 +83,10 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal(aveugle.partie.numero, undefined);
   assert.equal(aveugle.partie.annonces.some(a => a.fichier === 'voyante'), false);
   const actionVoyante = (await etat(voyante)).partie.numero;
-  await agir(voyante, loups.joueur, 'voyante');
+  const revelation = await agir(voyante, loups.joueur, 'voyante');
+  assert.equal(revelation.partie.historique.at(-1).role, 'loups');
+  assert.deepEqual((await etat(villageois)).partie.historique, []);
+  assert.equal((await etat(villageois)).partie.annonces.some(a => ['voyante', 'fin-voyante'].includes(a.fichier)), false);
   await post(room + 'agir', { numero: actionVoyante, choix: sorciere.joueur }, voyante.token, 400);
   await agir(loups, chasseur.joueur, 'loups');
   await agir(sorciere, { soin: true, poison: null }, 'sorciere');
@@ -129,10 +132,10 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal((await etat(hote)).partie.progression.reponses, 0);
 });
 
-test('les 24 annonces ont été produites en MP3', async () => {
+test('les 32 annonces sont disponibles en MP3', async () => {
   const dossier = new URL('./public/audio/', import.meta.url);
   const fichiers = (await readdir(dossier)).filter(nom => nom.endsWith('.mp3'));
-  assert.equal(fichiers.length, 24);
+  assert.equal(fichiers.length, 32);
   for (const fichier of fichiers) {
     const entree = await readFile(new URL(fichier, dossier));
     const balise = entree.subarray(0, 3).toString() === 'ID3';
@@ -229,7 +232,7 @@ test('l’administration Cloudflare protège les salons, les MP3 et la mise à j
   const avant = await (await appel('/api/admin')).json();
   assert.equal(avant.salons[0].code, hoteSalon.code);
   assert.equal(avant.salons[0].joueurs, 2);
-  assert.equal(avant.audios.length, 24);
+  assert.equal(avant.audios.length, 32);
 
   const cheminAudio = '/api/admin/audio/test-annonce.mp3';
   const fichier = await readFile(new URL('./public/audio/le-village-sendort.mp3', import.meta.url));
@@ -359,4 +362,30 @@ test('une partie reprend après redémarrage, avec les accès, un vote et les â
   await post(demoRacine + 'rejoindre', { nom: 'Intrus' }, undefined, 404);
   await post(demoRacine + 'agir', { numero: demoVue.partie.numero, choix: null }, demo.token);
   assert.equal((await post(demoRacine + 'etat', {}, demo.token)).partie.phase, 'voyante');
+});
+
+
+test('les annonces nocturnes suivent les phases et restent disponibles dans l’ordre', async () => {
+  const joueurs = ['Alice', 'Bastien', 'Camille', 'Diane', 'Élie'].map(nom => ({ id: nom, nom }));
+  const config = verifierConfiguration(5, { villageois: 2, loups: 1, voyante: 1, sorciere: 1 });
+  const partie = new Partie(joueurs, { ...config, hote: 'Alice', maire: true });
+  const parRole = new Map(joueurs.map(({ id }) => [partie.vue(id).role, id]));
+  const agir = (id, choix = null) => partie.agir(id, partie.vue(id).numero, choix);
+  for (const { id } of joueurs) agir(id);
+  const { annonces, annonceDepuis } = partie.vue('Alice');
+  assert.deepEqual(annonces.slice(annonceDepuis).map(a => a.fichier), ['le-village-sendort', 'voyante']);
+  agir(parRole.get('voyante'), parRole.get('loups'));
+  assert.deepEqual(partie.vue('Alice').annonces.slice(partie.vue('Alice').annonceDepuis).map(a => a.fichier), ['fin-voyante', 'loups']);
+  agir(parRole.get('loups'), parRole.get('villageois'));
+  agir(parRole.get('sorciere'), { soin: true, poison: null });
+  const debut = partie.vue('Alice');
+  assert.deepEqual(debut.annonces.slice(debut.annonceDepuis).map(a => a.fichier),
+    ['fin-sorciere', 'le-village-se-reveille', 'nuit-sans-victime', 'debut-debat']);
+  agir('Alice');
+  partie.terminerTour();
+  assert.equal(partie.annonces.at(-2).fichier, 'aucun-vote-maire');
+  partie.terminerTour();
+  const fichiers = await readdir(new URL('./public/audio/', import.meta.url));
+  for (const { fichier } of partie.annonces) assert.ok(fichiers.includes(fichier + '.mp3'), fichier);
+  assert.equal(partie.annonces.some(a => a.fichier === 'aucun-vote-elimination'), true);
 });

@@ -351,3 +351,10 @@ form, .options, .champ-jeu, .faq { display: grid; gap: 10px; }
   border-radius: 9px; background: var(--acc-dim); color: var(--accent); font-size: 16px;
 }
 .commandes-phase { padding-top: 9px; border-top: 1px solid var(--line); }
+
+.cible-examen { width: 100%; text-align: left; color: var(--text); }
+.cible-examen:hover { border-color: var(--acc-line); background: var(--acc-dim); }
+.cible-examen > .i { margin-inline-start: auto; color: var(--accent); }
+.fiche-revelation { display: grid; gap: 8px; justify-items: center; text-align: center; }
+.fiche-revelation h3 { font-size: 30px; }
+.fiche-revelation .art { width: min(100%, 210px); border-radius: var(--r-lg); box-shadow: var(--shadow-s); }

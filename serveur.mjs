@@ -498,7 +498,7 @@ const serveur = createServer(async (req, res) => {
     if (req.method === 'POST' && chemin === '/api/demo') {
       await lire(req);
       return json(res, 201, creer({ nom: 'Toi', total: 5,
-        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, discret: true, voteSecondes: 45 }, true));
+        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, voteSecondes: 45 }, true));
     }
     if (req.method === 'POST' && chemin === '/api/salons') {
       if (mode === 'invite') return json(res, 403, { erreur: 'Seul le lien hôte permet de créer un salon.' });
