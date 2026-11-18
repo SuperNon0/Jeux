@@ -1,0 +1,69 @@
+:root{color-scheme:dark;--fond:#151222;--surface:#231e33;--champ:#1b1729;--texte:#f5edf9;--second:#c8bad4;--accent:#d6bafa;--encre:#28163d;--bord:#4e4061;--ombre:#0b091370;--alerte:#f8d6a4;font:16px/1.5 system-ui,sans-serif}
+:root[data-theme=clair]{color-scheme:light;--fond:#f6effa;--surface:#fffaff;--champ:#f8f0fc;--texte:#281e36;--second:#604d70;--accent:#dbc1fa;--encre:#29153b;--bord:#baa9c6;--ombre:#3b15521a;--alerte:#904a23}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--fond);color:var(--texte)}
+button,input,select{font:inherit}
+button,a,input,select{touch-action:manipulation}
+a{color:inherit}
+button{border:1px solid transparent;border-radius:.8rem;background:var(--accent);color:var(--encre);padding:.65rem 1rem;font-weight:700;cursor:pointer}
+button:disabled{opacity:.55;cursor:default}
+:focus-visible{outline:3px solid #b987ff;outline-offset:3px}
+button.discret{color:var(--texte);background:var(--surface);border-color:var(--bord)}
+.entete{min-height:4.5rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1rem max(1.25rem,calc((100vw - 980px)/2));border-bottom:1px solid var(--bord)}
+.marque{text-decoration:none;font-weight:760;font-size:1.25rem;display:flex;gap:.55rem;align-items:center}
+.marque span{font-size:1.8rem;line-height:1;color:#b987ef}
+main{width:min(980px,calc(100% - 2rem));margin:1.3rem auto 7rem}
+.hero{min-height:16rem;display:flex;align-items:end;padding:clamp(1rem,5vw,2.8rem);border-radius:1.4rem;background:#25203c;position:relative;overflow:hidden;color:#fff}
+.hero::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#171126 15%,#17112660 65%,#17112610),url('/illustrations/cartes-et-ambiances.png') right bottom/300% 200% no-repeat}
+.hero>div{position:relative}
+h1,h2,h3{line-height:1.13;margin:0 0 .65rem}
+h1{font-family:Georgia,serif;font-size:clamp(2.2rem,7vw,4.1rem);font-weight:500}
+h2{font-size:1.25rem}
+p{margin:.4rem 0 1rem}
+.second{color:var(--second)}
+.grille{display:grid;gap:1rem;margin-top:1rem;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);align-items:start}
+.panneau{padding:clamp(1rem,3vw,1.45rem);border:1px solid var(--bord);border-radius:1.2rem;background:var(--surface);box-shadow:0 12px 35px var(--ombre)}
+form{display:grid;gap:.8rem}
+label{display:grid;gap:.28rem}
+input:not([type=checkbox]),select{width:100%;min-width:0;padding:.53rem .65rem;border-radius:.6rem;border:1px solid var(--bord);background:var(--champ);color:var(--texte)}
+input[type=checkbox]{accent-color:#a675da;width:1.15rem;height:1.15rem}
+.ligne,.cases,.actions{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
+.cases{justify-content:space-between}
+.ligne{justify-content:space-between}
+.ligne label,.ligne input[type=number]{width:auto}
+.ligne input[type=number]{max-width:5.3rem}
+.case{display:flex;align-items:center;gap:.55rem}
+fieldset{border:1px solid var(--bord);border-radius:.8rem;padding:.65rem;margin:0}
+fieldset .ligne+.ligne{margin-top:.35rem}
+summary{cursor:pointer}
+ul{padding-left:1.2rem;margin:.5rem 0 1rem}
+.noms{list-style:none;padding:0}
+.noms li{padding:.55rem 0;border-bottom:1px solid var(--bord);display:flex;align-items:center;gap:.5rem}
+.medaille{width:1.65rem;height:1.65rem;object-fit:contain;vertical-align:middle}
+.elimine{color:var(--second);text-decoration:line-through}
+.qr{width:145px;height:145px;background:#fff;border-radius:.7rem;display:block;margin:.8rem 0}
+.invitation{overflow-wrap:anywhere}
+.code{font-size:1.1rem;letter-spacing:.15em;font-weight:750}
+.flottante{position:fixed;bottom:max(.75rem,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:.3rem;z-index:2;padding:.35rem;border:1px solid var(--bord);border-radius:1rem;background:var(--surface);box-shadow:0 6px 28px var(--ombre)}
+.flottante button{white-space:nowrap}
+.carte-zone{text-align:center;perspective:950px}
+.carte{width:min(78vw,285px);aspect-ratio:1;position:relative;margin:.5rem auto 1rem;padding:0;border-radius:1rem;background:transparent;border:0;display:block;transform-style:preserve-3d;transition:transform .65s cubic-bezier(.24,.76,.3,1)}
+.carte:not(.revelee) .dos{animation:flotter 3.8s ease-in-out infinite}
+.carte.revelee{transform:rotateY(180deg)}
+.face{position:absolute;inset:0;border-radius:inherit;backface-visibility:hidden;box-shadow:0 20px 38px var(--ombre);background-image:url('/illustrations/cartes-et-ambiances.png');background-size:300% 200%;background-repeat:no-repeat}
+.dos{background-position:left bottom}
+.recto{transform:rotateY(180deg)}
+.recto.loups{background-position:left top}
+.recto.villageois{background-position:center top}
+.recto.voyante{background-position:right top}
+.recto.sorciere,.recto.chasseur{background-image:url('/illustrations/sorciere-et-chasseur.png');background-size:200% 100%}
+.recto.sorciere{background-position:left}
+.recto.chasseur{background-position:right}
+@keyframes flotter{50%{translate:0 -7px}}
+.annonce{border-left:3px solid var(--accent);padding:.55rem .8rem;color:var(--texte);background:var(--champ);border-radius:.45rem}
+#avis:empty{display:none}
+#avis{position:fixed;z-index:4;bottom:4.7rem;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 2rem);padding:.7rem 1rem;margin:0;background:var(--surface);color:var(--alerte);border:1px solid var(--bord);border-radius:.8rem;box-shadow:0 6px 28px var(--ombre)}
+@media(max-width:680px){.grille{grid-template-columns:1fr}.hero{min-height:12rem}.flottante button{padding:.55rem .75rem}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}.carte .recto{visibility:hidden}.carte.revelee .recto{visibility:visible}.carte.revelee .dos{visibility:hidden}}
+
+#nomination:not([hidden]){display:flex;align-items:center;gap:.65rem;position:fixed;top:1rem;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100% - 2rem);padding:.65rem .85rem;z-index:3;border:1px solid var(--bord);border-radius:.85rem;box-shadow:0 6px 20px var(--ombre);background:var(--surface)}
