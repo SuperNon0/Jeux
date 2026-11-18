@@ -1,17 +1,195 @@
 import { createServer } from 'node:http';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { createReadStream, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import QRCode from 'qrcode';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { Partie, verifierConfiguration } from './partie.mjs';
 
+const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+const acces = configurerAcces(process.env);
+const executerFichier = promisify(execFile);
+const audioInclus = new URL('./public/audio/', import.meta.url);
+const etatLocal = process.env.JEUX_ETAT ? resolve(process.env.JEUX_ETAT) : null;
+const dossierDonnees = etatLocal && resolve(etatLocal, 'donnees');
+const fichierDonnees = dossierDonnees && resolve(dossierDonnees, 'etat.json');
+const dossierAudio = etatLocal && resolve(etatLocal, 'audio');
+const dossierMaintenance = etatLocal && resolve(etatLocal, 'maintenance');
+const dossierCommandes = dossierMaintenance && resolve(dossierMaintenance, 'commandes');
+const demandeMiseAJour = dossierCommandes && resolve(dossierCommandes, 'demande');
+const fichierStatut = dossierMaintenance && resolve(dossierMaintenance, 'statut.json');
+const nomAudio = /^[a-z0-9]+(?:-[a-z0-9]+)*\.mp3$/;
+const tailleMaxAudio = 8 * 1024 * 1024;
+const erreurHttp = (status, message) => Object.assign(new Error(message), { status });
+
+function configurerAcces({ JEUX_URL_HOTE, JEUX_URL_INVITES, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD }) {
+  const requis = [JEUX_URL_HOTE, JEUX_URL_INVITES, CF_ACCESS_TEAM_DOMAIN, CF_ACCESS_AUD];
+  if (!requis.some(Boolean)) return null;
+  if (requis.some(valeur => !valeur)) {
+    throw new Error('Renseigne JEUX_URL_HOTE, JEUX_URL_INVITES, CF_ACCESS_TEAM_DOMAIN et CF_ACCESS_AUD ensemble.');
+  }
+  const origine = valeur => {
+    const url = new URL(valeur);
+    if (url.protocol !== 'https:' || url.href !== url.origin + '/') throw new Error('Indique une origine HTTPS sans chemin ni paramètres.');
+    return url;
+  };
+  const hote = origine(JEUX_URL_HOTE);
+  const invites = origine(JEUX_URL_INVITES);
+  const equipe = origine(CF_ACCESS_TEAM_DOMAIN);
+  if (hote.host === invites.host || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(equipe.host)) {
+    throw new Error('Utilise deux domaines distincts et une URL d’équipe Cloudflare Access valide.');
+  }
+  const cles = createRemoteJWKSet(new URL('/cdn-cgi/access/certs', equipe), { timeoutDuration: 4500 });
+  return { hote, invites, equipe, aud: CF_ACCESS_AUD, cles };
+}
+
+async function modeAcces(req) {
+  if (!acces) return 'local';
+  const domaine = req.headers.host?.toLowerCase();
+  const hote = domaine === acces.hote.host;
+  if (!hote && domaine !== acces.invites.host) return null;
+  const origine = hote ? acces.hote.origin : acces.invites.origin;
+  if (['POST', 'PUT'].includes(req.method)) {
+    const type = req.headers['content-type'] ?? '';
+    const typeAttendu = req.method === 'POST' ? /^application\/json(?:;|$)/i : /^(audio\/mpeg|application\/octet-stream)(?:;|$)/i;
+    if ((req.headers.origin && req.headers.origin !== origine) || !typeAttendu.test(type)) {
+      throw erreurHttp(403, 'Origine ou format de requête invalide.');
+    }
+  }
+  if (!hote) return 'invite';
+  const assertion = req.headers['cf-access-jwt-assertion'];
+  if (typeof assertion !== 'string') throw Object.assign(new Error('Connecte-toi via Cloudflare Access avec le lien hôte.'), { status: 403 });
+  try {
+    await jwtVerify(assertion, acces.cles, {
+      issuer: acces.equipe.origin, audience: acces.aud, algorithms: ['RS256'],
+      requiredClaims: ['sub', 'exp', 'iat'],
+    });
+  } catch {
+    throw Object.assign(new Error('La session Cloudflare Access est invalide ou expirée.'), { status: 403 });
+  }
+  return 'hote';
+}
+
 const salons = new Map();
+const presenceValide = 15_000;
+const dureeSalon = 24 * 60 * 60_000;
+const dureeDemo = 2 * 60 * 60_000;
+const dureeReprise = 10 * 60_000;
+const annoncesDisponibles = (await readdir(audioInclus))
+  .filter(nom => nomAudio.test(nom)).sort().map(nom => nom.slice(0, -4));
+let son = { associations: {}, volume: 100 };
+let dernierEnregistrement = Date.now();
+
+function sauvegarder() {
+  if (!fichierDonnees) return;
+  const date = Date.now();
+  const donnees = [...salons.values()].map(({ sessions, demandes, presence, partie, ...salon }) => ({
+    ...salon, sessions: [...sessions], demandes: [...demandes], partie: partie?.sauvegarde() ?? null,
+  }));
+  const temporaire = `${fichierDonnees}.tmp`;
+  try {
+    writeFileSync(temporaire, JSON.stringify({ version: 1, date, salons: donnees, son }), { mode: 0o600, flush: true });
+    renameSync(temporaire, fichierDonnees);
+    dernierEnregistrement = date;
+  } catch (incident) {
+    rmSync(temporaire, { force: true });
+    console.error('Échec de sauvegarde :', incident.code);
+    throw erreurHttp(503, 'Le serveur ne parvient pas à sauvegarder les parties.');
+  }
+}
+
+function charger() {
+  if (!fichierDonnees) return;
+  mkdirSync(dossierDonnees, { recursive: true, mode: 0o700 });
+  let contenu;
+  try { contenu = readFileSync(fichierDonnees, 'utf8'); }
+  catch (incident) { if (incident.code === 'ENOENT') return; throw incident; }
+  const archive = JSON.parse(contenu);
+  if (archive.version !== 1 || !Array.isArray(archive.salons)) throw new Error('Version de sauvegarde Jeux inconnue.');
+  son = archive.son ?? son;
+  for (const { sessions, demandes, partie, ...entree } of archive.salons) {
+    if (Date.now() - entree.activite >= limiteSalon(entree)) continue;
+    const salon = { ...entree, presence: new Map(), sessions: new Map(sessions), demandes: new Map(demandes),
+      partie: partie ? Partie.charger(partie, entree.joueurs, entree.config) : null };
+    salon.partie?.geler('absence', archive.date);
+    salons.set(salon.code, salon);
+  }
+}
+
+function limiteSalon(salon) { return salon.demo ? dureeDemo : dureeSalon; }
+
+function nettoyerSalons(maintenant = Date.now()) {
+  let change = false;
+  for (const [code, salon] of salons) {
+    if (maintenant - salon.activite >= limiteSalon(salon)) { salons.delete(code); change = true; }
+  }
+  return change;
+}
+
+function enLigne(salon, id, maintenant = Date.now()) {
+  return salon.bots?.includes(id) || maintenant - (salon.presence.get(id) ?? 0) < presenceValide;
+}
+
+function actualiserPartie(salon, maintenant = Date.now()) {
+  const partie = salon.partie;
+  if (!partie || partie.gagnant) return false;
+  if (![...salon.presence.values()].some(date => maintenant - date < presenceValide)) {
+    return partie.geler('absence', maintenant);
+  }
+  let change = partie.pause === 'absence' && partie.reprendre(maintenant);
+  if (partie.pause) return change;
+  if (partie.actualiserTemps(maintenant)) change = true;
+  if (salon.demo) {
+    for (let i = 0; i < 64 && !partie.gagnant; i++) {
+      const { acteurs, cibles, type, numero, reponses } = partie.tour;
+      const bot = acteurs.find(id => salon.bots.includes(id) && !reponses.has(id));
+      if (!bot) break;
+      const cible = cibles.find(id => id !== bot && id !== salon.config.hote) ?? cibles.find(id => id !== bot) ?? cibles[0];
+      const choix = type === 'sorciere' ? { soin: false, poison: null } : cible ?? null;
+      partie.agir(bot, numero, choix);
+      change = true;
+    }
+  }
+  return change;
+}
+
+charger();
+setInterval(() => {
+  try {
+    const maintenant = Date.now();
+    let change = nettoyerSalons(maintenant);
+    for (const salon of salons.values()) if (actualiserPartie(salon, maintenant)) change = true;
+    if (change || (maintenant - dernierEnregistrement >= 30_000 &&
+        [...salons.values()].some(salon => salon.activite > dernierEnregistrement))) sauvegarder();
+  } catch (incident) { console.error(incident.message); }
+}, 1000).unref();
+
+function pointer(salon, id) {
+  salon.activite = Date.now();
+  salon.presence.set(id, salon.activite);
+}
+
+function resume(salon, id) {
+  const enLigneNombre = salon.joueurs.filter(j => enLigne(salon, j.id)).length;
+  const statut = salon.partie?.gagnant ? 'terminee'
+    : salon.partie?.pause || enLigneNombre === 0 ? 'pause'
+    : salon.partie ? 'en-cours' : 'ouvert';
+  return {
+    code: salon.code, statut, demo: salon.demo, activite: salon.activite, enLigne: enLigneNombre,
+    joueurs: salon.joueurs.length, total: salon.total, jour: salon.partie?.jour ?? 0,
+    nom: salon.joueurs.find(j => j.id === id)?.nom,
+  };
+}
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const jeton = () => randomBytes(32).toString('base64url');
 
-function session(salon, joueur) {
+function session(salon, joueur, connecter = true) {
   const token = jeton();
   salon.sessions.set(token, joueur.id);
+  if (connecter) pointer(salon, joueur.id);
   return token;
 }
 
@@ -28,79 +206,260 @@ function ajouter(salon, nom) {
   return joueur;
 }
 
-function creer(data) {
+function duree(valeur = 0) {
+  if (!Number.isInteger(valeur) || (valeur !== 0 && (valeur < 15 || valeur > 900))) {
+    throw new Error('Un chronomètre doit durer entre 15 et 900 secondes. Choisis 0 pour le désactiver.');
+  }
+  return valeur;
+}
+
+function creer(data, demo = false) {
+  nettoyerSalons();
+  if (salons.size >= 500) throw erreurHttp(503, 'Le serveur a atteint sa capacité de salons.');
   const regles = verifierConfiguration(data.total, data.composition, data.ordre);
+  const config = { ...regles, maire: data.maire === true, discret: data.discret === true,
+    debatSecondes: duree(data.debatSecondes), voteSecondes: duree(data.voteSecondes) };
   let code;
   do { code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''); }
   while (salons.has(code));
   const salon = {
     code, total: data.total, joueurs: [], sessions: new Map(), demandes: new Map(), partie: null,
-    config: { ...regles, maire: data.maire === true, discret: data.discret === true },
+    presence: new Map(), activite: Date.now(), prochainNumero: 0, config, demo,
   };
   const hote = ajouter(salon, data.nom);
   salon.config.hote = hote.id;
+  const cle = session(salon, hote);
+  if (demo) {
+    salon.bots = ['Alice (bot)', 'Camille (bot)', 'Sam (bot)', 'Lou (bot)'].map(nom => ajouter(salon, nom).id);
+    salon.partie = new Partie(salon.joueurs, config, 0);
+    const voyante = salon.joueurs.find(({ id }) => salon.partie.cartes.get(id) === 'voyante').id;
+    salon.partie.cartes.set(voyante, salon.partie.cartes.get(hote.id));
+    salon.partie.cartes.set(hote.id, 'voyante');
+    actualiserPartie(salon);
+  }
   salons.set(code, salon);
-  return { code, token: session(salon, hote) };
+  sauvegarder();
+  return { code, token: cle };
+}
+
+function animateur(salon, id) {
+  return id === salon.config.hote || id === salon.config.cohote;
+}
+
+function passerDisponibles(salon) {
+  if (!salon.partie || ['debat', 'egaliteElection', 'egaliteVote'].includes(salon.partie.tour.type)) return [];
+  return salon.partie.absents(id => enLigne(salon, id));
 }
 
 function vue(salon, joueur) {
   const hote = joueur === salon.config.hote;
+  const anime = animateur(salon, joueur);
+  const partie = salon.partie?.vue(joueur);
+  if (partie && anime) partie.peutPasser = passerDisponibles(salon).length > 0;
   return {
-    code: salon.code, total: salon.total, joueurs: salon.joueurs, joueur, hote,
-    config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire },
-    partie: salon.partie?.vue(joueur) ?? null,
-    demandes: hote ? [...salon.demandes.values()].filter(d => d.statut === 'attente').map(({ id, joueur }) => ({
+    code: salon.code, total: salon.total, joueur, hote, anime, hoteId: salon.config.hote, cohoteId: salon.config.cohote,
+    demo: salon.demo, horloge: Date.now(), son,
+    joueurs: salon.joueurs.map(j => ({ ...j, enLigne: enLigne(salon, j.id) })),
+    resume: resume(salon, joueur),
+    config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire, discret: salon.config.discret },
+    partie: partie ?? null,
+    demandes: hote ? [...salon.demandes.values()].filter(d => d.statut === 'attente' && Date.now() - d.date <= dureeReprise).map(({ id, joueur }) => ({
       id, nom: salon.joueurs.find(j => j.id === joueur).nom,
     })) : [],
   };
 }
 
-function gerer(salon, action, data, token) {
+function gerer(salon, action, data, token, mode) {
+  if (salon.demo && !salon.sessions.has(token)) throw erreurHttp(404, 'Cette démo est privée.');
+  if (!salon.demo && mode === 'invite' && (salon.sessions.get(token) === salon.config.hote ||
+      (action === 'recuperer' && data.joueur === salon.config.hote))) {
+    throw Object.assign(new Error('Cette place doit être ouverte avec le lien hôte.'), { status: 403 });
+  }
+  if (mode === 'hote' && action === 'rejoindre') {
+    throw Object.assign(new Error('Rejoins la partie avec le lien d’invitation.'), { status: 403 });
+  }
   if (action === 'rejoindre') {
     if (salon.partie || salon.joueurs.length >= salon.total) throw new Error('Ce salon est complet ou la partie a commencé.');
-    return { code: salon.code, token: session(salon, ajouter(salon, data.nom)) };
+    const result = { code: salon.code, token: session(salon, ajouter(salon, data.nom)) };
+    sauvegarder();
+    return result;
   }
   if (action === 'recuperer') {
     if (!salon.joueurs.some(j => j.id === data.joueur)) throw new Error('Cette place n’existe plus.');
     const maintenant = Date.now();
     for (const [secret, demande] of salon.demandes) {
-      if (maintenant - demande.date > 10 * 60_000) salon.demandes.delete(secret);
+      if (maintenant - demande.date > dureeReprise) salon.demandes.delete(secret);
     }
     if (salon.demandes.size >= 40) throw new Error('Trop de demandes de reprise. Réessaie plus tard.');
     const secret = jeton();
     salon.demandes.set(secret, { id: randomUUID(), joueur: data.joueur, statut: 'attente', date: maintenant });
+    sauvegarder();
     return { secret };
   }
   if (action === 'reprise') {
     const demande = salon.demandes.get(token);
-    if (!demande || Date.now() - demande.date > 10 * 60_000) throw new Error('La demande a expiré.');
+    if (!demande || Date.now() - demande.date > dureeReprise) throw new Error('La demande a expiré.');
+    if (mode === 'invite' && demande.joueur === salon.config.hote) {
+      throw Object.assign(new Error('Cette place doit être ouverte avec le lien hôte.'), { status: 403 });
+    }
     return { statut: demande.statut, token: demande.token };
   }
   const joueur = salon.sessions.get(token);
   if (!joueur) throw Object.assign(new Error('Session expirée. Demande à reprendre ta place.'), { status: 401 });
+  if (action === 'apercu') return resume(salon, joueur);
+  if (action === 'absence') {
+    salon.presence.delete(joueur);
+    if (actualiserPartie(salon)) sauvegarder();
+    return resume(salon, joueur);
+  }
+  pointer(salon, joueur);
+  if (actualiserPartie(salon)) sauvegarder();
   if (action === 'etat') return vue(salon, joueur);
   if (action === 'agir') {
     if (!salon.partie) throw new Error('La partie n’a pas commencé.');
     salon.partie.agir(joueur, data.numero, data.choix);
+    actualiserPartie(salon);
+    sauvegarder();
+    return vue(salon, joueur);
+  }
+  if (['pause', 'reprendre', 'passer', 'prolonger'].includes(action)) {
+    if (!animateur(salon, joueur)) throw erreurHttp(403, 'Action réservée à l’animateur du salon.');
+    if (!salon.partie || salon.partie.gagnant) throw new Error('La partie est terminée ou n’a pas commencé.');
+    if (action === 'pause') salon.partie.geler('manuelle');
+    if (action === 'reprendre') salon.partie.reprendre();
+    if (action === 'passer') salon.partie.passer(passerDisponibles(salon));
+    if (action === 'prolonger') salon.partie.prolonger();
+    actualiserPartie(salon);
+    sauvegarder();
     return vue(salon, joueur);
   }
   if (joueur !== salon.config.hote) throw Object.assign(new Error('Cette action est réservée à l’hôte.'), { status: 403 });
-  if (action === 'decision') {
-    const demande = [...salon.demandes.values()].find(d => d.id === data.id && d.statut === 'attente' && Date.now() - d.date <= 10 * 60_000);
+  if (action === 'cohote') {
+    const id = data.joueur;
+    if (id !== null && (id === salon.config.hote || !salon.joueurs.some(j => j.id === id))) {
+      throw new Error('Choisis un invité du salon.');
+    }
+    if (salon.demo) throw new Error('La démo se joue en solo.');
+    if (salon.partie) salon.partie.changerCohote(id);
+    else salon.config.cohote = id;
+  } else if (action === 'decision') {
+    const demande = [...salon.demandes.values()].find(d => d.id === data.id && d.statut === 'attente' && Date.now() - d.date <= dureeReprise);
     if (!demande) throw new Error('Cette demande a expiré.');
     demande.statut = data.accepte === true ? 'acceptee' : 'refusee';
     if (demande.statut === 'acceptee') {
       for (const [cle, place] of salon.sessions) if (place === demande.joueur) salon.sessions.delete(cle);
-      demande.token = session(salon, { id: demande.joueur });
+      salon.presence.delete(demande.joueur);
+      for (const autre of salon.demandes.values()) {
+        if (autre !== demande && autre.joueur === demande.joueur && autre.statut === 'attente') autre.statut = 'refusee';
+      }
+      demande.token = session(salon, { id: demande.joueur }, false);
     }
   } else if (action === 'lancer') {
     if (salon.partie || salon.joueurs.length !== salon.total) throw new Error('Toutes les places doivent être occupées.');
-    salon.partie = new Partie(salon.joueurs, salon.config);
+    if (!salon.joueurs.every(j => enLigne(salon, j.id))) throw new Error('Attends que tous les joueurs soient de retour.');
+    salon.partie = new Partie(salon.joueurs, salon.config, salon.prochainNumero);
   } else if (action === 'retour') {
     if (salon.partie?.tour.type !== 'fin') throw new Error('La partie est encore en cours.');
-    salon.partie = null;
+    salon.prochainNumero = salon.partie.numero;
+    if (salon.demo) {
+      salon.partie = new Partie(salon.joueurs, salon.config, salon.prochainNumero);
+      const voyante = salon.joueurs.find(({ id }) => salon.partie.cartes.get(id) === 'voyante').id;
+      salon.partie.cartes.set(voyante, salon.partie.cartes.get(joueur));
+      salon.partie.cartes.set(joueur, 'voyante');
+      actualiserPartie(salon);
+    } else salon.partie = null;
   } else throw Object.assign(new Error('Action inconnue.'), { status: 404 });
+  sauvegarder();
   return vue(salon, joueur);
+}
+
+async function statutMaintenance() {
+  if (!dossierCommandes || !(await stat(dossierCommandes).catch(() => null))?.isDirectory()) return { actif: false };
+  const precedent = await readFile(fichierStatut, 'utf8').then(JSON.parse).catch(() => ({}));
+  const demande = Boolean(await stat(demandeMiseAJour).catch(() => null));
+  return { ...precedent, actif: true, statut: demande && precedent.statut !== 'en-cours' ? 'en-attente' : precedent.statut ?? 'pret' };
+}
+
+async function planifierMiseAJour(confirme) {
+  if (!confirme) throw erreurHttp(400, 'Confirme le redémarrage avant de lancer la mise à jour.');
+  const maintenance = await statutMaintenance();
+  if (!maintenance.actif) throw erreurHttp(503, 'Le service de mise à jour n’est pas installé dans ce conteneur.');
+  if (['en-attente', 'en-cours'].includes(maintenance.statut)) throw erreurHttp(409, 'Une mise à jour est déjà en cours.');
+  try { await writeFile(demandeMiseAJour, '', { flag: 'wx', mode: 0o600 }); }
+  catch (incident) {
+    if (incident.code === 'EEXIST') throw erreurHttp(409, 'Une mise à jour est déjà en cours.');
+    throw erreurHttp(503, 'Impossible de transmettre la demande au service système.');
+  }
+  return { ...maintenance, statut: 'en-attente' };
+}
+
+async function audiosAdmin() {
+  const inclus = await readdir(audioInclus);
+  const personnalises = dossierAudio ? await readdir(dossierAudio).catch(() => []) : [];
+  return [...new Set([...inclus, ...personnalises])].filter(nom => nomAudio.test(nom)).sort()
+    .map(nom => ({ nom, fourni: inclus.includes(nom), personnalise: personnalises.includes(nom) }));
+}
+
+async function enregistrerAudio(req, nom) {
+  if (!dossierAudio) throw erreurHttp(503, 'Le dossier des audios personnalisés est indisponible.');
+  if (!nomAudio.test(nom) || nom.length > 80) throw erreurHttp(400, 'Utilise un nom MP3 en minuscules, avec des tirets.');
+  if (Number(req.headers['content-length']) > tailleMaxAudio) throw erreurHttp(413, 'Le fichier doit faire au plus 8 Mio.');
+  const morceaux = [];
+  let taille = 0;
+  for await (const morceau of req.iterator({ destroyOnReturn: false })) {
+    taille += morceau.length;
+    if (taille > tailleMaxAudio) {
+      req.resume();
+      throw erreurHttp(413, 'Le fichier doit faire au plus 8 Mio.');
+    }
+    morceaux.push(morceau);
+  }
+  if (!taille) throw erreurHttp(400, 'Sélectionne un fichier MP3.');
+  const temporaire = await mkdtemp(resolve(dossierAudio, '.import-'));
+  try {
+    const chemin = resolve(temporaire, 'annonce.mp3');
+    await writeFile(chemin, Buffer.concat(morceaux), { mode: 0o600 });
+    try {
+      await executerFichier('ffmpeg', ['-nostdin', '-v', 'error', '-xerror', '-f', 'mp3', '-i', chemin,
+        '-map', '0:a:0', '-f', 'null', '-'], { timeout: 12_000, maxBuffer: 32_768 });
+    } catch {
+      throw erreurHttp(422, 'Le fichier est illisible ou n’est pas un MP3 valide.');
+    }
+    await rename(chemin, resolve(dossierAudio, nom));
+  } finally { await rm(temporaire, { recursive: true, force: true }); }
+  return { nom };
+}
+
+async function admin(req, res, chemin, mode) {
+  if (mode !== 'hote') throw erreurHttp(403, 'Ce panneau est réservé au lien hôte protégé par Cloudflare Access.');
+  if (req.method === 'GET' && chemin === '/api/admin') {
+    if (nettoyerSalons()) sauvegarder();
+    const liste = [...salons.values()].map(salon => {
+      const { nom, ...infos } = resume(salon, salon.config.hote);
+      return { ...infos, hote: nom };
+    }).sort((a, b) => b.activite - a.activite);
+    return json(res, 200, { salons: liste, audios: await audiosAdmin(), stockageAudio: Boolean(dossierAudio), version, son, annonces: annoncesDisponibles, maintenance: await statutMaintenance() });
+  }
+  if (req.method === 'POST' && chemin === '/api/admin/son') {
+    const { evenement, fichier, volume } = await lire(req);
+    if (!Number.isInteger(volume) || volume < 0 || volume > 100 ||
+        !annoncesDisponibles.includes(evenement) ||
+        (fichier !== '' && !(await audiosAdmin()).some(audio => audio.nom === fichier))) {
+      throw erreurHttp(400, 'Sélectionne une annonce, un MP3 disponible et un volume entre 0 et 100.');
+    }
+    const associations = { ...son.associations };
+    if (fichier) associations[evenement] = fichier;
+    else delete associations[evenement];
+    son = { volume, associations };
+    sauvegarder();
+    return json(res, 200, son);
+  }
+  if (req.method === 'POST' && chemin === '/api/admin/miseajour') {
+    return json(res, 202, await planifierMiseAJour((await lire(req)).confirme === true));
+  }
+  const fichier = chemin.match(/^\/api\/admin\/audio\/([a-z0-9-]+\.mp3)$/);
+  if (req.method === 'PUT' && fichier) return json(res, 200, await enregistrerAudio(req, fichier[1]));
+  return json(res, 404, { erreur: 'Action inconnue.' });
 }
 
 async function lire(req) {
@@ -119,7 +478,7 @@ function json(res, status, objet) {
   res.end(JSON.stringify(objet));
 }
 
-const formats = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', png: 'image/png', mp3: 'audio/mpeg' };
+const formats = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', png: 'image/png', svg: 'image/svg+xml', woff2: 'font/woff2', mp3: 'audio/mpeg' };
 
 const serveur = createServer(async (req, res) => {
   try {
@@ -127,32 +486,62 @@ const serveur = createServer(async (req, res) => {
     res.setHeader('Referrer-Policy', 'no-referrer');
     const url = new URL(req.url, 'http://localhost');
     const chemin = url.pathname;
-    if (req.method === 'POST' && chemin === '/api/salons') return json(res, 201, creer(await lire(req)));
+    if (req.method === 'GET' && chemin === '/sante' && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) {
+      return json(res, 200, { ok: true, version });
+    }
+    const mode = await modeAcces(req);
+    if (!mode) return json(res, 421, { erreur: 'Utilise le lien hôte ou le lien d’invitation.' });
+    if (chemin === '/api/admin' || chemin.startsWith('/api/admin/')) return await admin(req, res, chemin, mode);
+    if (req.method === 'GET' && chemin === '/api/configuration') {
+      return json(res, 200, { mode, origineInvites: acces?.invites.origin, son });
+    }
+    if (req.method === 'POST' && chemin === '/api/demo') {
+      await lire(req);
+      return json(res, 201, creer({ nom: 'Toi', total: 5,
+        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, discret: true, voteSecondes: 45 }, true));
+    }
+    if (req.method === 'POST' && chemin === '/api/salons') {
+      if (mode === 'invite') return json(res, 403, { erreur: 'Seul le lien hôte permet de créer un salon.' });
+      return json(res, 201, creer(await lire(req)));
+    }
     const route = chemin.match(/^\/api\/salons\/([A-Z2-9]{6})\/([a-z]+)$/);
     if (route) {
       const [, code, action] = route;
       const salon = salons.get(code);
-      if (!salon) return json(res, 404, { erreur: 'Ce salon n’existe plus.' });
-      if (req.method === 'GET' && action === 'joueurs') return json(res, 200, { joueurs: salon.joueurs });
+      if (!salon || Date.now() - salon.activite >= limiteSalon(salon)) {
+        if (salons.delete(code)) sauvegarder();
+        return json(res, 404, { erreur: 'Ce salon n’existe plus.' });
+      }
+      if (salon.demo && req.method === 'GET') return json(res, 404, { erreur: 'Cette démo est privée.' });
+      if (req.method === 'GET' && action === 'joueurs') {
+        const joueurs = mode === 'invite' ? salon.joueurs.filter(j => j.id !== salon.config.hote) : salon.joueurs;
+        return json(res, 200, { joueurs });
+      }
       if (req.method === 'GET' && action === 'qr') {
         const invitation = new URL(url.searchParams.get('url'));
         if (!['http:', 'https:'].includes(invitation.protocol) || invitation.pathname !== '/' ||
             invitation.search !== `?salon=${code}` || invitation.hash || invitation.username ||
-            invitation.password || invitation.href.length > 250) throw new Error('Lien d’invitation invalide.');
+            invitation.password || invitation.href.length > 250 || (acces && invitation.origin !== acces.invites.origin)) throw new Error('Lien d’invitation invalide.');
         const png = await QRCode.toBuffer(invitation.href, { width: 240, margin: 2 });
         res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
         return res.end(png);
       }
       if (req.method !== 'POST') return json(res, 405, { erreur: 'Méthode invalide.' });
-      return json(res, 200, gerer(salon, action, await lire(req), req.headers.authorization?.replace(/^Bearer /, '')));
+      return json(res, 200, gerer(salon, action, await lire(req), req.headers.authorization?.replace(/^Bearer /, ''), mode));
     }
     const fichier = chemin === '/' ? '/index.html' : chemin;
     if (!['GET', 'HEAD'].includes(req.method) ||
-        !/^\/(?:index\.html|style\.css|app\.js|illustrations\/[a-z-]+\.png|audio\/[a-z-]+\.mp3)$/.test(fichier)) {
+        !/^\/(?:index\.html|(?:style|encre|polices)\.css|app\.js|icones\.svg|polices\/[a-z0-9-]+\.woff2|illustrations\/[a-z-]+\.png|audio\/[a-z0-9-]+\.mp3)$/.test(fichier)) {
       return json(res, 404, { erreur: 'Page introuvable.' });
     }
-    const local = new URL(`./public${fichier}`, import.meta.url);
-    const infos = await stat(local).catch(() => null);
+    let local = new URL(`./public${fichier}`, import.meta.url);
+    let infos;
+    if (dossierAudio && fichier.startsWith('/audio/')) {
+      const remplacement = resolve(dossierAudio, fichier.slice('/audio/'.length));
+      infos = await stat(remplacement).catch(() => null);
+      if (infos?.isFile()) local = remplacement;
+    }
+    if (typeof local !== 'string') infos = await stat(local).catch(() => null);
     if (!infos?.isFile()) return json(res, 404, { erreur: 'Fichier introuvable.' });
     const extension = fichier.split('.').at(-1);
     const entetes = { 'Content-Type': formats[extension], 'Cache-Control': 'no-cache' };
@@ -188,4 +577,11 @@ const serveur = createServer(async (req, res) => {
 
 serveur.listen(Number(process.env.PORT ?? 3000), process.env.HOST ?? '0.0.0.0', () => {
   console.log(`Jeux écoute sur le port ${serveur.address().port}.`);
+});
+
+
+process.once('SIGTERM', () => {
+  try { sauvegarder(); }
+  catch { process.exitCode = 1; }
+  serveur.close();
 });

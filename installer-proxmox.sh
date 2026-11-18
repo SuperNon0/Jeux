@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 source_script=$(realpath -- "${BASH_SOURCE[0]}")
 projet=$(dirname -- "$source_script")
-fichiers=(package.json package-lock.json partie.mjs regles.mjs serveur.mjs public install/jeux-install.sh)
+fichiers=(package.json package-lock.json partie.mjs regles.mjs serveur.mjs public install/jeux-install.sh install/jeux-update.sh)
 marqueur='__ARCHIVE_JEUX_BASE64__'
 ligne_archive() { awk -v marqueur="$marqueur" '$0 == marqueur { print NR+1; exit }' "$source_script"; }
 

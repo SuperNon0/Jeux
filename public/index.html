@@ -1,20 +1,25 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-accent="lavande">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#151222">
-  <title>Loup-Garou · Jeux</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Jeux · Loup-Garou</title>
+  <link rel="stylesheet" href="/polices.css">
+  <link rel="stylesheet" href="/encre.css">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="entete"><a href="/" class="marque"><span aria-hidden="true">☾</span> Jeux</a><button id="theme" class="discret" type="button">Mode clair</button></header>
-  <main id="app"></main>
-  <aside id="nomination" hidden role="status" aria-live="polite">
+  <a class="saut" href="#app">Aller au contenu</a>
+  <header class="entete" id="entete"></header>
+  <aside class="side jeux-side" id="navigation"></aside>
+  <main id="app" tabindex="-1"></main>
+  <nav class="tabbar jeux-tabbar" id="onglets" aria-label="Navigation"></nav>
+  <dialog id="feuille" class="jeux-feuille" aria-labelledby="titre-feuille"></dialog>
+  <aside id="nomination" class="notification" hidden role="status" aria-live="polite">
     <img class="medaille" src="/illustrations/medaillon-maire.png" alt="">
     <span></span>
   </aside>
-  <p id="avis" role="status" aria-live="polite"></p>
+  <p id="avis" class="notification" role="status" aria-live="polite" hidden></p>
 </body>
 </html>
