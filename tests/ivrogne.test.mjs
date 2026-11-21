@@ -96,7 +96,29 @@ test('l’Ivrogne ne retourne pas chez la même personne deux nuits de suite', (
 
 test('au réveil, l’Ivrogne découvre le rôle de son hôte', () => {
   const p = partie();
-  nuit(p, { hote: 'Félix', cible: 'Élie' });
+  p.config.narration = true;
+  jouer(p, 'Félix');
+  p.demarrerChrono();
+  jouer(p, 'Bastien', 'Félix');
+  p.demarrerChrono();
+  assert.equal(p.vue('Bastien').revelationPrivee, undefined);
+
+  jouer(p, 'Diane', 'Élie');
+  assert.equal(p.vue('Bastien').attendAnnonce, true);
+  assert.equal(p.vue('Bastien').revelationPrivee, undefined);
+  p.demarrerChrono();
+  const decouverte = { nuit: 1, nom: 'Félix', role: 'Gardien' };
+  assert.deepEqual(p.vue('Bastien').revelationPrivee, decouverte);
   assert.match(p.vue('Bastien').infoRole, /nuit 1, Félix : Gardien/);
-  assert.equal(p.vue('Camille').infoRole, undefined);
+  for (const autre of ['Alice', 'Camille', 'Félix']) {
+    assert.equal(p.vue(autre).revelationPrivee, undefined);
+    assert.equal(p.vue(autre).infoRole, undefined);
+  }
+
+  const rechargee = Partie.charger(JSON.parse(JSON.stringify(p.sauvegarde())), p.joueurs, p.config);
+  assert.deepEqual(rechargee.vue('Bastien').revelationPrivee, decouverte);
+  rechargee.nuit();
+  rechargee.demarrerChrono();
+  assert.equal(rechargee.vue('Bastien').revelationPrivee, undefined);
+  assert.match(rechargee.vue('Bastien').infoRole, /nuit 1, Félix : Gardien/);
 });

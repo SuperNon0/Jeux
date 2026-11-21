@@ -590,7 +590,7 @@ function choixJoueurs(p) {
       ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}
       ${p.action.peutPasserVote ? `<label class="cible">
         <input type="radio" required name="cible" value="passer" ${choixCible.valeur === 'passer' ? 'checked' : ''}>
-        <span class="avatar">${icone('chev', 18)}</span><strong>Passer le vote <small>· À l’unanimité</small></strong>
+        <span class="avatar">${icone('chev', 18)}</span><strong>Passer le vote <small>· À la majorité</small></strong>
       </label>` : ''}</fieldset>
     <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : (nuit?.bouton ?? textes[p.phase] ?? 'Valider')}</button>
     ${nuit?.passer ? action(nuit.passer, 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
@@ -817,7 +817,10 @@ function partie() {
       <div class="tirage-cartes" aria-hidden="true">${art('dos')}${art('dos')}${art('dos')}</div>
     </section>`;
   }
-  const contenu = zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p);
+  const revelation = p.revelationPrivee;
+  const decouverte = revelation ? `<p class="notice" role="status">${icone('lock', 18)}
+    <span>Tu as dormi chez <strong>${echapper(revelation.nom)}</strong>. Son rôle était <strong>${echapper(revelation.role)}</strong>.</span></p>` : '';
+  const contenu = zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : decouverte + vuePhase(p);
   if (zone === 'carte' && p.phase === 'distribution') return contenu;
   if (interfaceJoueur()) {
     return `${entetePage(zones[zone][0], p.jour ? `Tour ${p.jour}` : '')}

@@ -309,7 +309,6 @@ export class Partie {
   attendreNuit() { this.phase('attenteNuit', this.animateurs(), []); }
 
   ouvrirVote() {
-    this.annoncer('fin-debat');
     if (this.config.maire && !this.maire) this.vote('election');
     else this.voteElimination();
   }
@@ -319,7 +318,10 @@ export class Partie {
     this.tour.relance = fichier === 'second-tour';
   }
 
-  voteElimination() { this.vote('vote'); }
+  voteElimination() {
+    this.annoncer('fin-debat');
+    this.vote('vote');
+  }
 
   peutPasserVote() {
     return this.tour.type === 'vote' && this.jour === 1 && !this.tour.relance;
@@ -532,7 +534,9 @@ export class Partie {
       }
       case 'vote': {
         const marque = !this.tour.relance && this.vivants.has(this.marqueCorbeau) ? this.marqueCorbeau : null;
-        if (this.peutPasserVote() && this.tour.acteurs.length && this.tour.acteurs.every(acteur => reponses.get(acteur) === votePasse)) {
+        const voixPourPasser = this.peutPasserVote()
+          ? this.tour.acteurs.filter(acteur => reponses.get(acteur) === votePasse).length : 0;
+        if (voixPourPasser > this.tour.acteurs.length / 2) {
           this.marqueCorbeau = null;
           this.annoncer('vote-passe', 'Le village a choisi de passer le vote. Personne n’est éliminé.');
           this.attendreNuit();
@@ -575,6 +579,7 @@ export class Partie {
 
   vue(id) {
     const { type, numero, acteurs, cibles, reponses } = this.tour;
+    const role = this.cartes.get(id);
     const concerne = acteurs.includes(id) && (!reponses.has(id) || type === 'loups');
     const peutAgir = concerne && !this.pause && !this.tour.preparation;
     const nuit = this.config.ordre.includes(type);
@@ -616,9 +621,10 @@ export class Partie {
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),
       bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
-      infoRole: roles[this.cartes.get(id)]?.info?.(this, id),
-      role: this.cartes.get(id), amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
-      allies: this.cartes.get(id) === 'loups'
+      infoRole: roles[role]?.info?.(this, id),
+      revelationPrivee: preparation ? undefined : roles[role]?.revelationPrivee?.(this, id),
+      role, amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
+      allies: role === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,

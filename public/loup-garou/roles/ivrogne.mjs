@@ -15,7 +15,7 @@ export default {
     'Si la meute vise ta maison pendant que tu dors ailleurs, elle la trouve vide. Son attaque ne fait alors aucune victime.',
     'Si tu choisis un Loup-Garou comme hôte, tu meurs au réveil, quelle que soit la cible de la meute.',
     'Si les loups dévorent la personne chez qui tu dors, tu meurs avec elle. Si le Gardien ou la Sorcière la sauve, tu es sauvé aussi.',
-    'Au réveil, tu découvres le rôle de la personne chez qui tu as dormi. Il reste noté sous ta carte pour toute la partie.',
+    'Au réveil, le rôle de ton hôte apparaît sur ton écran de partie. Tu peux le retrouver sous ta carte.',
     'Si tu restes chez toi, tu ne découvres rien et tu es un simple membre du village pour la nuit. Tu gagnes avec le village.',
   ],
   art: { image: 'roles/ivrogne.png' },
@@ -52,6 +52,12 @@ export default {
     const vus = decouvertes.map(({ nuit, nom, role }) => `nuit ${nuit}, ${nom} : ${role}`).join(' · ');
     return [vus && `Tes hôtes : ${vus}.`, precedent && `Impossible de retourner chez ${partie.nom(precedent)} ce soir.`]
       .filter(Boolean).join(' ');
+  },
+
+  revelationPrivee(partie, joueur) {
+    const { ivrogne, decouvertes } = etatIvrogne(partie);
+    const derniere = decouvertes?.at(-1);
+    if (ivrogne === joueur && derniere?.nuit === partie.jour) return derniere;
   },
 
   // Les loups visent l’Ivrogne pendant qu’il dort ailleurs : la maison est vide.

@@ -107,9 +107,9 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - Avant le tirage, **Ajouter un bot** permet à l’hôte de remplir les places libres. Ouvre deux écrans et ajoute trois bots pour essayer une composition de cinq joueurs.
 - L’hôte clique sur **Tirer les cartes**. Chaque joueur retourne sa carte et confirme **Je suis prêt**. L’hôte lance alors la partie, active le son et attend la fin du compte à rebours de 10 secondes.
 - La Voyante choisit une cible, consulte sa carte en privé, puis confirme **J’ai vu la carte** avant l’annonce de fin de tour.
-- L’élection du maire est activée par défaut. Après le premier débat, la narration ouvre l’élection. Le nom du maire élu s’affiche sur tous les écrans et le bulletin d’élimination s’ouvre après les annonces.
+- L’élection du maire est activée par défaut. Après le premier débat, la narration appelle le village à élire son maire. À l’issue de l’élection, le nom du maire élu s’affiche sur tous les écrans, puis les annonces de fin de débat et d’ouverture du vote précèdent le bulletin d’élimination.
 - Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Chaque joueur peut retourner la carte de la personne éliminée. L’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
-- Au premier tour du premier vote d’élimination, chaque joueur encore en jeu peut choisir **Passer le vote**. Si tous le choisissent, personne n’est éliminé. Sinon, les votes pour passer comptent comme des abstentions.
+- Au premier tour du premier vote d’élimination, **Passer le vote** exige plus de la moitié des joueurs encore en jeu, soit trois voix sur cinq. Chaque joueur compte une fois pour cette décision. Si le seuil n’est pas atteint, les bulletins pour passer comptent comme des abstentions.
 - Quand le Chasseur est éliminé par le vote ou par les loups, il tire aussitôt, avant le test de victoire. Tué la nuit, son choix s’ouvre au réveil, avant le débat. Si sa mort élimine déjà le dernier loup, le village gagne sans tir.
 - Après sa révélation, la Voyante a 20 secondes pour confirmer qu’elle a vu la carte, puis la nuit continue.
 - La Sorcière décide d’abord si elle utilise son soin quand il est disponible. Elle peut ensuite choisir une cible pour son poison ou le garder. Chaque choix dispose de son propre chronomètre.
@@ -126,7 +126,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 | Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre le nom de son partenaire sur son téléphone. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
 | Gardien | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. Son identifiant technique reste `salvateur`. |
 | Enfant sauvage | Choisit un modèle la première nuit. Si ce modèle meurt, il devient Loup-Garou en secret et rejoint la meute dès la nuit suivante. |
-| Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Au réveil, il découvre le rôle de son hôte. Absent, il échappe à une attaque contre sa maison. Il meurt s’il dort chez un Loup-Garou ou si la meute dévore son hôte. |
+| Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Au réveil, le rôle de son hôte s’affiche sur son écran de partie et reste consultable sous sa carte. Absent, il échappe à une attaque contre sa maison. Il meurt s’il dort chez un Loup-Garou ou si la meute dévore son hôte. |
 | Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
 | Corbeau | Peut marquer un autre joueur chaque nuit, ou ne marquer personne. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 

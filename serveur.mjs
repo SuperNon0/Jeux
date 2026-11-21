@@ -180,10 +180,10 @@ function actualiserPartie(salon, maintenant = Date.now()) {
       let choix;
       if (partie.peutPasserVote()) {
         const humains = acteurs.filter(id => !estBot(salon, id));
-        if (humains.length && humains.every(id => !reponses.has(id) || reponses.get(id) === votePasse)) {
-          if (humains.some(id => !reponses.has(id))) break;
-          choix = votePasse;
-        }
+        const voixPourPasser = humains.filter(id => reponses.get(id) === votePasse).length;
+        const enAttente = humains.filter(id => !reponses.has(id)).length;
+        if (voixPourPasser > humains.length / 2) choix = votePasse;
+        else if (voixPourPasser + enAttente > humains.length / 2) break;
       }
       partie.agir(bot, numero, choix ?? choixDuBot(salon, bot, type, cibles));
       change = true;
