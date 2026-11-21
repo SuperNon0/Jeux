@@ -1,0 +1,61 @@
+name: Voix du narrateur
+
+# Crée les MP3 manquants avec la voix « Tom » de Piper dès qu’une phrase est ajoutée au catalogue.
+on:
+  push:
+    branches: [main]
+    paths: ['public/annonces.json', 'outils/voix.mjs', '.github/workflows/voix.yml']
+  workflow_dispatch:
+    inputs:
+      essai:
+        description: Phrase d’essai à générer dans outils/essais/essai.mp3 (laisser vide pour le catalogue)
+        required: false
+      forcer:
+        description: Clés à régénérer, séparées par des virgules
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voix-${{ github.ref }}
+
+jobs:
+  voix:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Installer Piper et FFmpeg
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install piper-tts==1.8.0
+      - uses: actions/cache@v4
+        with:
+          path: outils/voix
+          key: voix-fr_FR-tom-medium
+      - name: Télécharger la voix Tom
+        run: test -f outils/voix/fr_FR-tom-medium.onnx || python -m piper.download_voices fr_FR-tom-medium --download-dir outils/voix
+      - name: Générer
+        env:
+          ESSAI: ${{ inputs.essai }}
+          FORCER: ${{ inputs.forcer }}
+        run: |
+          if [ -n "$ESSAI" ]; then
+            mkdir -p outils/essais && node outils/voix.mjs --essai "$ESSAI" outils/essais/essai.mp3
+          elif [ -n "$FORCER" ]; then
+            node outils/voix.mjs --forcer "$FORCER"
+          else
+            node outils/voix.mjs
+          fi
+      - name: Enregistrer les MP3
+        run: |
+          git add public/audio outils/essais 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Rien de nouveau."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Générer les voix du narrateur"
+          git push
