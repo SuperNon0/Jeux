@@ -86,22 +86,10 @@ main:focus { outline: none; }
   display: block; aspect-ratio: 1; background-image: url('/illustrations/cartes-et-ambiances.png');
   background-repeat: no-repeat; background-size: 300% auto;
 }
-.art-loups { background-position: left top; }
-.art-villageois { background-position: center top; }
-.art-voyante { background-position: right top; }
+/* Les cartes de rôle prennent leur image dans public/loup-garou/roles/<rôle>.mjs. */
 .art-dos { background-position: left bottom; }
 .art-jour { background-position: center bottom; }
 .art-nuit { background-position: right bottom; }
-.art-sorciere, .art-chasseur { background-image: url('/illustrations/sorciere-et-chasseur.png'); background-size: 200% 100%; }
-.art-sorciere { background-position: left top; }
-.art-chasseur { background-position: right top; }
-.art-salvateur, .art-ancien, .art-corbeau, .art-cupidon {
-  background-image: url('/illustrations/roles-extension.png'); background-size: 200% 200%;
-}
-.art-salvateur { background-position: left top; }
-.art-ancien { background-position: right top; }
-.art-corbeau { background-position: left bottom; }
-.art-cupidon { background-position: right bottom; }
 .role {
   position: relative; isolation: isolate; aspect-ratio: 1; text-align: left;
   border-radius: var(--r-lg); border: 1px solid var(--line2); overflow: hidden; color: var(--on-img);

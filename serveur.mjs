@@ -635,7 +635,7 @@ function json(res, status, objet) {
   res.end(JSON.stringify(objet));
 }
 
-const formats = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', png: 'image/png', svg: 'image/svg+xml', woff2: 'font/woff2', mp3: 'audio/mpeg' };
+const formats = { html: 'text/html; charset=utf-8', css: 'text/css; charset=utf-8', js: 'text/javascript; charset=utf-8', mjs: 'text/javascript; charset=utf-8', png: 'image/png', svg: 'image/svg+xml', woff2: 'font/woff2', mp3: 'audio/mpeg' };
 
 const serveur = createServer(async (req, res) => {
   try {
@@ -689,7 +689,7 @@ const serveur = createServer(async (req, res) => {
     }
     const fichier = chemin === '/' ? '/index.html' : chemin;
     if (!['GET', 'HEAD'].includes(req.method) ||
-        !/^\/(?:index\.html|(?:style|encre|polices)\.css|app\.js|icones\.svg|polices\/[a-z0-9-]+\.woff2|illustrations\/[a-z-]+\.png|audio\/[a-z0-9-]+\.mp3)$/.test(fichier)) {
+        !/^\/(?:index\.html|(?:style|encre|polices)\.css|app\.js|icones\.svg|polices\/[a-z0-9-]+\.woff2|illustrations\/(?:roles\/)?[a-z-]+\.png|loup-garou\/roles\/[a-z-]+\.mjs|audio\/[a-z0-9-]+\.mp3)$/.test(fichier)) {
       return json(res, 404, { erreur: 'Page introuvable.' });
     }
     if (fichier === '/index.html') {

@@ -1,3 +1,5 @@
+import { listeRoles, nomsCamps } from './loup-garou/roles/index.mjs';
+
 const app = document.querySelector('#app');
 const entete = document.querySelector('#entete');
 const navigation = document.querySelector('#navigation');
@@ -9,30 +11,17 @@ const versionChargee = new URL(import.meta.url).searchParams.get('v');
 
 const zones = { accueil: ['Accueil', 'home'], salons: ['Mes salons', 'users'], partie: ['Partie', 'moon'],
   carte: ['Ma carte', 'layers'], journal: ['Journal', 'list'], admin: ['Administration', 'shield'], plus: ['Plus', 'dots'] };
-const roles = {
-  villageois: { nom: 'Villageois', camp: 'Village', pouvoir: 'Observe, débats et vote pour démasquer les Loups-Garous.' },
-  loups: { nom: 'Loup-Garou', camp: 'Meute', pouvoir: 'Choisis une cible chaque nuit avec les membres de ta meute.' },
-  voyante: { nom: 'Voyante', camp: 'Village', pouvoir: 'Découvre le rôle d’une personne chaque nuit. Tes révélations restent dans ton journal privé.' },
-  sorciere: { nom: 'Sorcière', camp: 'Village', pouvoir: 'Tu as une potion de soin et une de poison. Chacune ne s’utilise qu’une fois.' },
-  chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, tu emportes aussitôt une personne avec toi.' },
-  cupidon: { nom: 'Cupidon', camp: 'Village', pouvoir: 'La première nuit, lie deux personnes, toi compris si tu le veux. Si l’une meurt, l’autre meurt de chagrin. Un couple formé d’un loup et d’un membre du village gagne s’il reste seul en vie.' },
-  salvateur: { nom: 'Salvateur', camp: 'Village', pouvoir: 'Protège une personne de l’attaque des loups, toi compris. D’une nuit à la suivante, choisis une personne différente ou passe ton tour.' },
-  ancien: { nom: 'Ancien', camp: 'Village', pouvoir: 'Tu survis à la première attaque des loups qui te touche. Le poison et le vote peuvent t’éliminer dès la première fois.' },
-  corbeau: { nom: 'Corbeau', camp: 'Village', pouvoir: 'Chaque nuit, tu peux désigner une autre personne. Elle reçoit deux voix contre elle au premier tour du prochain vote d’élimination si elle survit à la nuit.' },
-};
-const rolesClassiques = ['voyante', 'sorciere', 'chasseur'];
-const rolesOptionnels = [...rolesClassiques, 'cupidon', 'salvateur', 'ancien', 'corbeau'];
+// Les rôles viennent de public/loup-garou/roles/ : un fichier par rôle, partagé avec le serveur.
+const roles = Object.fromEntries(listeRoles.map(role => [role.id, { ...role, camp: nomsCamps[role.camp] ?? role.camp }]));
+const rolesClassiques = listeRoles.filter(role => role.classique).map(role => role.id);
+const rolesOptionnels = listeRoles.filter(role => !role.multiple).map(role => role.id);
 const phases = {
   distribution: ['Distribution', 'Découvre ton rôle', 'Retourne ta carte à l’abri des regards, puis indique que tu es prêt.', 'layers'],
   lancement: ['Distribution', 'Tout le monde est prêt', 'L’hôte lance la partie quand la table est prête.', 'play'],
   compteARebours: ['Distribution', 'La partie commence', 'Le compte à rebours est partagé sur tous les téléphones.', 'clock'],
   nuit: ['Nuit', 'Le village dort', 'Les personnes appelées agissent sur leur téléphone. La suite s’affichera ici.', 'moon'],
-  cupidon: ['Nuit', 'Forme un couple', roles.cupidon.pouvoir, 'heart'],
-  voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
-  salvateur: ['Nuit', 'Choisis qui protéger', roles.salvateur.pouvoir, 'shield'],
-  loups: ['Nuit', 'Choisissez votre cible', 'Mettez-vous d’accord : tu vois le choix des autres loups et tu peux changer le tien.', 'moon'],
-  sorciere: ['Nuit', 'Choisis tes potions', 'Tu peux garder tes potions pour une autre nuit.', 'sparkle'],
-  corbeau: ['Nuit', 'Choisis qui marquer', roles.corbeau.pouvoir, 'moon'],
+  ...Object.fromEntries(listeRoles.filter(role => role.nuit).map(({ id, nuit, pouvoir }) =>
+    [id, ['Nuit', nuit.titre, nuit.consigne ?? pouvoir, nuit.icone ?? 'moon']])),
   debat: ['Jour', 'Le village débat', 'Discutez à voix haute. L’hôte ouvre le vote quand tout le monde est prêt.', 'chat'],
   election: ['Élection', 'Élisez le maire', 'Le maire a une voix double lors des votes d’élimination et départage les égalités.', 'star'],
   egaliteElection: ['Élection', 'Égalité à l’élection', 'L’hôte peut relancer le vote ou tirer au sort parmi les personnes à égalité.', 'dice'],
@@ -109,7 +98,11 @@ const echapper = valeur => String(valeur ?? '').replace(/[&<>"']/g, c => ({ '&':
 const icone = (nom, taille = 20) => `<svg class="i s${taille}" aria-hidden="true"><use href="/icones.svg#i-${nom}"></use></svg>`;
 const marque = `<a class="brand" href="/" data-action="accueil"><span class="embleme">${icone('moon', 22)}</span><span class="wm">Jeux</span></a>`;
 const medaille = '<img class="medaille" src="/illustrations/medaillon-maire.png" alt="Maire">';
-const art = nom => `<span class="art art-${nom}" aria-hidden="true"></span>`;
+const art = nom => {
+  const image = roles[nom]?.art;
+  const style = image ? ` style="background-image: url('/illustrations/${image.image}'); background-size: ${image.taille ?? 'cover'}; background-position: ${image.position ?? 'center'}"` : '';
+  return `<span class="art art-${nom}"${style} aria-hidden="true"></span>`;
+};
 const choixPrenom = `<div class="champ-jeu"><label for="prenom-salon">Ton prénom</label><select id="prenom-salon" name="prenom" required>
   <option value="" disabled selected>Choisir un prénom</option>
   ${(hebergement.prenoms ?? []).map(prenom => `<option value="${echapper(prenom)}">${echapper(prenom)}</option>`).join('')}
@@ -580,21 +573,22 @@ function etapes(p) {
 
 function choixJoueurs(p) {
   if (choixCible.numero !== p.numero) choixCible = { numero: p.numero, valeur: p.action.choixActuel ?? null };
-  const textes = { salvateur: 'Protéger', corbeau: 'Marquer', loups: 'Confirmer la cible', election: 'Envoyer mon vote',
-    vote: 'Envoyer mon vote', departage: 'Confirmer le départage', chasseur: 'Confirmer le tir', succession: 'Désigner le maire' };
+  const textes = { election: 'Envoyer mon vote', vote: 'Envoyer mon vote', departage: 'Confirmer le départage',
+    chasseur: 'Confirmer le tir', succession: 'Désigner le maire' };
+  const nuit = roles[p.phase]?.nuit;
   const meute = p.phase === 'loups' && p.action.meute?.length > 1
     ? `<ul class="soft">${p.action.meute.map(loup => `<li>${echapper(loup.nom)}${loup.toi ? ' (toi)' : ''} · ${loup.cible ? echapper(loup.cible) : 'pas encore de choix'}</li>`).join('')}</ul>
       <p class="soft">La victime est choisie quand toute la meute vise la même personne. Sans accord à la fin du délai, le sort départage.</p>`
     : '';
-  return `${meute}<form data-form="cible" data-numero="${p.numero}">
+  const info = p.action.info ? `<p class="notice">${icone('eye', 18)}${echapper(p.action.info)}</p>` : '';
+  return `${info}${meute}<form data-form="cible" data-numero="${p.numero}">
     <fieldset class="liste-cibles"><legend class="sr">Joueurs disponibles</legend>${p.action.cibles.map(id => `
       <label class="cible"><input type="radio" required name="cible" value="${id}" ${choixCible.valeur === id ? 'checked' : ''}>
       <span class="avatar">${echapper(initiales(etiquette(id)))}</span><strong>${echapper(etiquette(id))}${id === etat.joueur ? ' <small>· Toi</small>' : ''}</strong>
       ${p.maire === id ? medaille : ''}
       ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}</fieldset>
-    <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : textes[p.phase]}</button>
-    ${p.phase === 'salvateur' ? action('Passer cette nuit', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}
-    ${p.phase === 'corbeau' ? action('Ne marquer personne', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
+    <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : (nuit?.bouton ?? textes[p.phase] ?? 'Valider')}</button>
+    ${nuit?.passer ? action(nuit.passer, 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
 }
 
 function choixCupidon(p) {
@@ -699,7 +693,8 @@ function carte(p) {
   function detailCarte(p) {
     if (!revelee) return '<p class="soft">Touche la carte pour révéler ton rôle.</p>';
     return `<h3 class="ttl">${role.nom}</h3><p class="soft">${role.pouvoir}</p>
-      ${p.allies.length ? `<p class="soft">Ta meute · ${p.allies.map(echapper).join(', ')}</p>` : ''}`;
+      ${p.allies.length ? `<p class="soft">Ta meute · ${p.allies.map(echapper).join(', ')}</p>` : ''}
+      ${p.infoRole ? `<p class="soft">${echapper(p.infoRole)}</p>` : ''}`;
   }
 }
 
@@ -744,7 +739,8 @@ function vuePhase(p) {
   }
   if (p.phase === 'fin') {
     const victoire = { village: 'Le village l’emporte', loups: 'La meute l’emporte',
-      amoureux: 'Les amoureux l’emportent', egalite: 'Aucun camp ne survit' }[p.gagnant];
+      amoureux: 'Les amoureux l’emportent', egalite: 'Aucun camp ne survit' }[p.gagnant] ??
+      `${roles[p.gagnant]?.nom ?? 'Un camp'} l’emporte`;
     const resultat = p.gagnant === 'amoureux' ? p.vivants.map(etiquette).map(echapper).join(' et ') : '';
     return afficheScene('scene-jour resultat', `<h2 class="ttl">${victoire}</h2>`,
       resultat || 'Les rôles de tous les joueurs sont révélés.',
@@ -1077,8 +1073,18 @@ function optionsComposition() {
     favoris.map(({ nom }, index) => `<option value="favori-${index}">${echapper(nom)}</option>`).join('');
 }
 
+// Le menu règle l’ordre de la Voyante, des Loups et de la Sorcière. Les autres rôles de nuit se placent selon
+// leur rang : avant le premier de ces trois, après le dernier, ou juste avant celui qui les suit.
 function ordreActif(ordre, estActif) {
-  return ['cupidon', ...ordre.split(',').flatMap(id => id === 'loups' ? ['salvateur', 'loups'] : [id]), 'corbeau'].filter(estActif);
+  const base = ordre.split(',');
+  const rang = id => roles[id].nuit.rang;
+  const rangs = base.map(rang);
+  const autres = Object.keys(roles).filter(id => roles[id].nuit && !base.includes(id)).sort((a, b) => rang(a) - rang(b));
+  const debut = autres.filter(id => rang(id) < Math.min(...rangs));
+  const fin = autres.filter(id => rang(id) > Math.max(...rangs));
+  const avant = id => autres.filter(autre => !debut.includes(autre) && !fin.includes(autre) &&
+    base.filter(b => rang(b) > rang(autre)).sort((a, b) => rang(a) - rang(b))[0] === id);
+  return [...debut, ...base.flatMap(id => [...avant(id), id]), ...fin].filter(estActif);
 }
 
 function lireDurees(donnees) {

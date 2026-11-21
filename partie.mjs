@@ -1,8 +1,15 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { annonceElimination, candidatsEnTete, ordreDeNuit, roles, tirerAuSort } from './regles.mjs';
+import { rolesHistoriques } from './public/loup-garou/roles/index.mjs';
 
 export const delaiForcage = 45_000;
 export const delaiRevelation = 20_000;
+// Un rôle mort ou sans pouvoir est quand même appelé, pour que le silence ne trahisse rien.
+export const dureeAppelFactice = [8, 14];
+
+// Rôles ajoutés par fichier : leur pouvoir passe par les crochets décrits dans public/loup-garou/roles/.
+const rolesACrochets = Object.keys(roles).filter(role => !rolesHistoriques.includes(role));
+const crochets = (nom) => rolesACrochets.map(role => [role, roles[role][nom]]).filter(([, f]) => typeof f === 'function');
 
 const phasesDeChoix = new Set([
   ...Object.keys(roles).filter(role => roles[role].nuit), 'chasseur', 'departage', 'succession',
@@ -12,7 +19,7 @@ export function verifierConfiguration(total, composition, ordre) {
   if (!Number.isInteger(total) || total < 5 || total > 16) throw new Error('Choisis entre 5 et 16 joueurs.');
   const quantites = Object.fromEntries(Object.keys(roles).map(role => [role, composition?.[role] ?? 0]));
   if (Object.values(quantites).some(n => !Number.isInteger(n) || n < 0) ||
-      Object.entries(quantites).some(([role, nombre]) => nombre > 1 && role !== 'villageois' && role !== 'loups') ||
+      Object.entries(quantites).some(([role, nombre]) => nombre > 1 && !roles[role].multiple) ||
       Object.values(quantites).reduce((somme, n) => somme + n, 0) !== total ||
       quantites.loups < 1 || quantites.loups * 2 >= total) {
     throw new Error('Répartis toutes les places. Prévois au moins un loup, des villageois majoritaires et un exemplaire au plus de chaque rôle spécial.');
@@ -119,7 +126,8 @@ export class Partie {
         maintenant >= this.tour.preparation.limite && this.demarrerChrono(null, maintenant);
     }
     if (!this.tour.echeance || maintenant < this.tour.echeance) return false;
-    if (this.tour.type === 'debat') this.ouvrirVote();
+    if (this.tour.factice) this.terminerRoleNocturne(this.tour.type);
+    else if (this.tour.type === 'debat') this.ouvrirVote();
     else if (this.tour.type === 'compteARebours') this.nuit();
     else if (this.tour.type === 'sorciere' && this.potionAttendue() === 'soin' && this.potions.poison) {
       this.ouvrirPoison(maintenant);
@@ -145,7 +153,9 @@ export class Partie {
   passer(absents) {
     if (!absents.length) throw new Error('Aucune action absente à passer pour le moment.');
     const { type, acteurs, reponses } = this.tour;
-    if (['cupidon', 'voyante', 'sorciere', 'salvateur', 'corbeau'].includes(type)) this.terminerRoleNocturne(type);
+    if (['cupidon', 'voyante', 'sorciere', 'salvateur', 'corbeau', ...rolesACrochets].includes(type) && roles[type]?.nuit) {
+      this.terminerRoleNocturne(type);
+    }
     else if (type === 'chasseur' || type === 'succession') this.resoudreEffets();
     else if (type === 'departage') this.eliminerAuVote(tirerAuSort(this.tour.cibles));
     else if (type === 'loups') {
@@ -216,18 +226,28 @@ export class Partie {
   prochainRole() {
     while (this.indexNuit < this.config.ordre.length) {
       const role = this.config.ordre[this.indexNuit++];
-      if (role === 'cupidon' && this.jour !== 1) continue;
+      const regle = roles[role];
+      if (regle.nuit.premiereNuitSeulement && this.jour !== 1) continue;
       const acteurs = [...this.vivants].filter(id => this.cartes.get(id) === role);
-      if (!acteurs.length || (role === 'sorciere' && !this.potions.poison && (!this.potions.soin || !this.victimeLoups))) continue;
-      const cibles = [...this.vivants].filter(id => {
-        if (role === 'loups' || role === 'corbeau') return !acteurs.includes(id);
-        if (role === 'salvateur') return id !== this.derniereProtection;
-        return true;
-      });
-      if (!cibles.length) continue;
-      this.phase(role, acteurs, cibles, this.config.discret ? undefined : role);
-      return;
+      const cibles = this.ciblesDeNuit(role, acteurs);
+      const actif = acteurs.length && cibles.length &&
+        !(role === 'sorciere' && !this.potions.poison && (!this.potions.soin || !this.victimeLoups)) &&
+        (regle.actif?.(this, acteurs) ?? true);
+      if (actif) {
+        this.phase(role, acteurs, cibles, this.config.discret ? undefined : role);
+        return;
+      }
+      // Les loups ne peuvent pas disparaître sans finir la partie : seuls les autres rôles sont simulés.
+      if (!this.config.discret && role !== 'loups') {
+        this.phase(role, [], [], role);
+        const [min, max] = dureeAppelFactice;
+        this.tour.factice = true;
+        this.tour.duree = min + randomInt(max - min + 1);
+        if (!this.tour.preparation) this.tour.echeance = this.tour.debut + this.tour.duree * 1000;
+        return;
+      }
     }
+    for (const [, auReveil] of crochets('auReveil')) auReveil(this);
     this.annoncer('le-village-se-reveille');
     if (this.ancienMorduCetteNuit) {
       this.annoncer('ancien-survit', 'L’Ancien a survécu à la morsure des loups.');
@@ -236,6 +256,21 @@ export class Partie {
     this.annoncer(victimes.length ? 'nuit-avec-victimes' : 'nuit-sans-victime',
       victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'La nuit n’a fait aucune victime.');
     this.eliminer(victimes.map(id => [id, id === this.victimeLoups ? 'loups' : 'poison']), 'debat');
+  }
+
+  ciblesDeNuit(role, acteurs) {
+    if (roles[role].cibles) return roles[role].cibles(this, acteurs);
+    return [...this.vivants].filter(id => {
+      if (role === 'salvateur') return id !== this.derniereProtection;
+      if (['voyante', 'sorciere', 'cupidon'].includes(role)) return true;
+      return !acteurs.includes(id);
+    });
+  }
+
+  // Mémoire d’un rôle ajouté par fichier, sauvegardée avec la partie.
+  etatRole(role) {
+    this.etatsRoles ??= {};
+    return (this.etatsRoles[role] ??= {});
   }
 
   terminerRoleNocturne(role) {
@@ -295,9 +330,9 @@ export class Partie {
     if (!this.vivants.delete(id)) return;
     const role = this.cartes.get(id);
     if (this.config.annoncesEliminations) {
-      const { fichier, message } = annonceElimination(this.nom(id), role);
-      this.annoncer(fichier, message);
+      for (const { fichier, message } of annonceElimination(this.nom(id), role)) this.annoncer(fichier, message);
     }
+    for (const [, surMort] of crochets('surMort')) surMort(this, id, cause);
     if (role === 'chasseur' && ['vote', 'loups'].includes(cause)) {
       this.effets.unshift({ type: 'chasseur', acteur: id });
     }
@@ -320,6 +355,14 @@ export class Partie {
       return;
     }
     this.effets = [];
+    for (const [, victoire] of crochets('victoire')) {
+      const gagnant = victoire(this);
+      if (gagnant) {
+        this.gagnant = gagnant;
+        this.phase('fin', [], [], `victoire-${gagnant}`);
+        return;
+      }
+    }
     const loups = [...this.vivants].filter(id => this.cartes.get(id) === 'loups').length;
     const [premier, second] = this.couple ?? [];
     const coupleMixte = this.vivants.has(premier) && this.vivants.has(second) &&
@@ -413,7 +456,7 @@ export class Partie {
       this.terminerRoleNocturne(type);
       return;
     }
-    const protectionPassee = ['salvateur', 'corbeau'].includes(type) && choix === null;
+    const protectionPassee = Boolean(roles[type]?.nuit?.passer) && choix === null;
     if (cibles.length && !protectionPassee && (!cibles.includes(choix) || (type === 'voyante' && choix === id))) {
       throw new Error('Choisis un joueur disponible.');
     }
@@ -442,6 +485,9 @@ export class Partie {
         const premiers = candidatsEnTete(reponses);
         const cible = premiers.length ? tirerAuSort(premiers) : null;
         this.victimeLoups = cible === this.protection ? null : cible;
+        if (this.victimeLoups && crochets('surAttaque').some(([, surAttaque]) => surAttaque(this, this.victimeLoups))) {
+          this.victimeLoups = null;
+        }
         if (this.cartes.get(this.victimeLoups) === 'ancien' && !this.ancienTouche) {
           this.ancienTouche = true;
           this.ancienMorduCetteNuit = true;
@@ -467,7 +513,11 @@ export class Partie {
       }
       case 'vote': {
         const marque = !this.tour.relance && this.vivants.has(this.marqueCorbeau) ? this.marqueCorbeau : null;
-        const premiers = candidatsEnTete(reponses, this.maire, marque);
+        const bonus = {};
+        for (const [, surVote] of crochets('surVote')) {
+          for (const [cible, voix] of Object.entries(surVote(this, reponses) ?? {})) bonus[cible] = (bonus[cible] ?? 0) + voix;
+        }
+        const premiers = candidatsEnTete(reponses, this.maire, marque, bonus);
         this.marqueCorbeau = null;
         if (!premiers.length) {
           this.annoncer('aucun-vote-elimination', 'Aucun vote reçu. Personne n’est éliminé.');
@@ -489,6 +539,11 @@ export class Partie {
         this.resoudreEffets();
         break;
       case 'succession': this.elire(choix, true); this.resoudreEffets(); break;
+      default:
+        if (rolesACrochets.includes(type) && roles[type].nuit) {
+          roles[type].agir?.(this, id, choix);
+          this.terminerRoleNocturne(type);
+        }
     }
   }
 
@@ -504,7 +559,7 @@ export class Partie {
     const annoncesDiffusables = Math.max(this.tour.annonceDepuis, this.annonceLue ?? 0);
     const annonces = preparation && this.config.annoncesEliminations
       ? this.annonces.map(annonce => {
-        if (annonce.id > annoncesDiffusables && annonce.fichier?.startsWith('elimination-')) {
+        if (annonce.id > annoncesDiffusables && /^(?:elimination|deces|role)-/.test(annonce.fichier ?? '')) {
           return hote ? { id: annonce.id, fichier: annonce.fichier } : { id: annonce.id };
         }
         return annonce;
@@ -523,7 +578,7 @@ export class Partie {
       narrationActive: this.config.narration === true,
       narrationObligatoire: this.config.narrationObligatoire === true,
       annonceLue: annonceLue?.fichier,
-      messageEliminationLue: annonceLue?.fichier?.startsWith('elimination-') ? annonceLue.message : undefined,
+      messageEliminationLue: /^(?:elimination|role)-/.test(annonceLue?.fichier ?? '') ? annonceLue.message : undefined,
       revelationVote: preparation ? undefined : this.revelationVote,
       chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
         arrete: type === 'fin' ? debut : this.pauseDepuis },
@@ -533,12 +588,14 @@ export class Partie {
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),
       bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
+      infoRole: roles[this.cartes.get(id)]?.info?.(this, id),
       role: this.cartes.get(id), amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
       allies: this.cartes.get(id) === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,
         ...(this.tour.revelationAttendue && { revelationAttendue: true }),
+        ...(roles[type]?.vue && { info: roles[type].vue(this, id) }),
         ...(type === 'loups' && {
           choixActuel: reponses.get(id) ?? null,
           meute: acteurs.map(loup => ({ nom: this.nom(loup), cible: this.nom(reponses.get(loup)) ?? null, toi: loup === id })),

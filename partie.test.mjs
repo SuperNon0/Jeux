@@ -9,6 +9,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { test } from 'node:test';
 import { Partie, verifierConfiguration } from './partie.mjs';
 import { annonceElimination, prenoms, roles } from './regles.mjs';
+import { phrasesAttendues } from './outils/catalogue.mjs';
 
 async function horlogeDeTest(t) {
   const dossier = await mkdtemp(join(tmpdir(), 'jeux-horloge-'));
@@ -194,16 +195,16 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal((await etat(hote)).partie.progression.reponses, 0);
 });
 
-test('les annonces fournies et les combinaisons prénom-rôle ont chacune un MP3 et un sous-titre', async () => {
+test('chaque annonce a un MP3 et un sous-titre, et les phrases des rôles sont dans le catalogue', async () => {
   const dossier = new URL('./public/audio/', import.meta.url);
   const fichiers = (await readdir(dossier)).filter(nom => nom.endsWith('.mp3'));
-  assert.equal(fichiers.length, 45 + (Object.keys(prenoms).length + 1) * Object.keys(roles).length);
   const sousTitres = JSON.parse(await readFile(new URL('./public/annonces.json', import.meta.url), 'utf8'));
-  assert.deepEqual(Object.keys(sousTitres).map(cle => `${cle}.mp3`).sort(), fichiers.sort());
+  assert.deepEqual(Object.keys(sousTitres).map(cle => `${cle}.mp3`).sort(), fichiers.sort(),
+    'Lance « npm run catalogue », puis laisse l’action GitHub « Voix du narrateur » créer les MP3.');
+  for (const [cle, texte] of Object.entries(phrasesAttendues())) assert.equal(sousTitres[cle], texte, cle);
   for (const nom of [...Object.values(prenoms), 'Bot 1']) {
     for (const role of Object.keys(roles)) {
-      const { fichier, texte } = annonceElimination(nom, role);
-      assert.equal(sousTitres[fichier], texte);
+      for (const { fichier } of annonceElimination(nom, role)) assert.ok(sousTitres[fichier], fichier);
     }
   }
   for (const fichier of fichiers) {
@@ -241,9 +242,10 @@ test('une élimination annonce le prénom et le rôle au bon moment, même avant
   const annoncerFin = () => partie.demarrerChrono(partie.vue('Noë').temps.annonce);
   annoncerFin();
   jouer(partie, 'Maël', 'Julien');
-  const fichier = 'elimination-julien-chasseur';
+  const fichier = 'role-chasseur';
   const piste = partie.vue('Noë').annonces.find(a => a.fichier === fichier);
   assert.ok(piste);
+  assert.equal(partie.annonces[piste.id - 2].fichier, 'deces-julien');
   assert.equal(piste.message, undefined);
   assert.equal(partie.vue('Marine').annonces.some(a => a.fichier === fichier), false);
   assert.equal(partie.vue('Julien').action, null);
@@ -254,7 +256,7 @@ test('une élimination annonce le prénom et le rôle au bon moment, même avant
   assert.equal(partie.vue('Julien').action, null);
   annoncerFin();
   jouer(partie, 'Julien', 'Bot 1');
-  const pisteBot = partie.vue('Noë').annonces.find(a => a.fichier === 'elimination-role-villageois');
+  const pisteBot = partie.vue('Noë').annonces.find(a => a.fichier === 'role-villageois');
   partie.suivreAnnonce(pisteBot.id);
   assert.equal(partie.vue('Marine').messageEliminationLue, 'Bot 1 a perdu la vie. Son rôle était Villageois.');
   assert.equal(partie.vue('Marine').annonces.filter(a => a.fichier === fichier).length, 1);
@@ -594,7 +596,7 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   const avant = await (await appel('/api/admin')).json();
   assert.equal(avant.salons[0].code, hoteSalon.code);
   assert.equal(avant.salons[0].joueurs, 2);
-  assert.equal(avant.audios.length, 135);
+  assert.equal(avant.audios.length, (await readdir(new URL('./public/audio/', import.meta.url))).length);
   assert.ok(avant.annonces.includes('victoire-amoureux'));
   const illustration = await appel('/illustrations/roles-extension.png', { domaine: invite });
   assert.equal(illustration.headers.get('content-type'), 'image/png');
@@ -645,7 +647,7 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   assert.equal((await entrer({ prenom: 'Noë' })).status, 400);
   assert.equal((await entrer({ nom: 'Autre personne' })).status, 400);
   assert.equal((await entrer({ prenom: 'Maël'.normalize('NFD') })).status, 200);
-  const audioNomme = await appel('/audio/elimination-julien-chasseur.mp3', { domaine: invite });
+  const audioNomme = await appel('/audio/deces-julien.mp3', { domaine: invite });
   assert.equal(audioNomme.status, 200);
   assert.equal(audioNomme.headers.get('content-type'), 'audio/mpeg');
   const botInvite = { domaine: invite, token: sessionInvite.token, donnees: {} };
@@ -988,4 +990,51 @@ test('le Corbeau peut ne marquer personne', () => {
   assert.equal(partie.tour.type, 'debat');
   assert.equal(partie.marqueCorbeau, null);
   assert.ok(!partie.annonces.some(a => ['cri-corbeau', 'marque-corbeau'].includes(a.fichier)));
+});
+
+test('un rôle mort ou sans pouvoir est quand même appelé, sauf en narration discrète', () => {
+  const cartes = { Alice: 'villageois', Bastien: 'voyante', Camille: 'sorciere', Diane: 'loups', Élie: 'villageois', Félix: 'villageois' };
+  const partie = partieAvecRoles(cartes);
+  jouer(partie, 'Bastien', 'Alice');
+  jouer(partie, 'Bastien', 'confirmer');
+  jouer(partie, 'Diane', 'Bastien');
+  jouer(partie, 'Camille', { soin: false, poison: 'Élie' });
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Félix');
+  finirVoteAvecAbstentions(partie);
+  jouer(partie, 'Alice');
+  // Nuit 2 : la Voyante est morte, mais le narrateur l’appelle pendant quelques secondes.
+  assert.equal(partie.tour.type, 'voyante');
+  assert.equal(partie.tour.factice, true);
+  assert.deepEqual(partie.tour.acteurs, []);
+  assert.ok(partie.tour.duree >= 8 && partie.tour.duree <= 14);
+  assert.equal(partie.vue('Bastien').action, null);
+  assert.equal(partie.vue('Alice').phase, 'nuit');
+  assert.equal(partie.annonces.at(-1).fichier, 'voyante');
+  partie.actualiserTemps(partie.tour.echeance);
+  assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['fin-voyante', 'loups']);
+
+  const discret = partieAvecRoles(cartes, { discret: true });
+  jouer(discret, 'Bastien', 'Alice');
+  jouer(discret, 'Bastien', 'confirmer');
+  jouer(discret, 'Diane', 'Bastien');
+  jouer(discret, 'Camille', { soin: false, poison: null });
+  jouer(discret, 'Alice');
+  jouer(discret, 'Alice', 'Félix');
+  finirVoteAvecAbstentions(discret);
+  jouer(discret, 'Alice');
+  assert.equal(discret.tour.type, 'loups');
+});
+
+test('une Sorcière sans potion est appelée pour la forme', () => {
+  const partie = partieAvecRoles({ Alice: 'villageois', Camille: 'sorciere', Diane: 'loups', Élie: 'villageois', Félix: 'villageois' });
+  partie.potions = { soin: false, poison: false };
+  jouer(partie, 'Diane', 'Alice');
+  assert.equal(partie.tour.type, 'sorciere');
+  assert.equal(partie.tour.factice, true);
+  assert.equal(partie.vue('Camille').action, null);
+  partie.actualiserTemps(partie.tour.echeance);
+  const fichiers = partie.annonces.map(a => a.fichier);
+  const appel = fichiers.indexOf('sorciere');
+  assert.deepEqual(fichiers.slice(appel, appel + 3), ['sorciere', 'fin-sorciere', 'le-village-se-reveille']);
 });
