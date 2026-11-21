@@ -14,29 +14,34 @@ Le script utilise le moteur de [Proxmox VE Helper-Scripts](https://community-scr
 
 ## Cloudflare Tunnel avec un lien hôte et un lien invité
 
-Dans Cloudflare Zero Trust, réutilise ton tunnel existant. Remplace les domaines d’exemple ci-dessous par tes sous-domaines.
+Réutilise ton tunnel existant. Les exemples ci-dessous utilisent `hote-jeux.super-nono.cc` et `jouer.super-nono.cc`. Le [tutoriel SSO de SuperNon0/site](https://github.com/SuperNon0/site/blob/main/docs/tuto-cloudflare-sso.md) décrit une application Access couvrant `*.super-nono.cc`. Si elle existe toujours, le sous-domaine invité doit avoir sa propre règle.
 
-1. Dans **Access → Applications**, crée une application **Self-hosted** pour `hote.example.com`. Ajoute une règle **Allow** limitée à ton adresse e-mail ou aux comptes qui pourront héberger des parties. Récupère l’**Application Audience (AUD) Tag** et l’URL d’équipe `https://nom-equipe.cloudflareaccess.com`.
-2. Dans ton tunnel, ajoute deux routes publiques. `hote.example.com` et `jouer.example.com` pointent vers le même service HTTP, par exemple `http://192.168.1.42:3000` si le connecteur tourne sur un autre conteneur. Si `cloudflared` tourne dans le conteneur du jeu, utilise `http://127.0.0.1:3000`. Conserve le nom d’hôte public sur chaque route. Si tu renseignes **HTTP Host Header**, utilise le sous-domaine public correspondant à cette route.
-3. Sur la route hôte, active **Protect with Access** avec la même équipe et le même AUD. Le jeu valide aussi le jeton Access côté serveur. Laisse la route `jouer.example.com` hors de l’application Access de l’hôte pour permettre aux invités de rejoindre avec leur QR ou leur code.
+1. Dans **Zero Trust → Access controls → Applications**, crée une application **Self-hosted** pour le seul hostname `hote-jeux.super-nono.cc`. Ajoute une politique **Allow** pour les e-mails autorisés à administrer Jeux. Dans **Edit → Additional settings**, copie l’**Application Audience (AUD) Tag** de cette application. Note aussi l’URL complète de ton équipe, de la forme `https://nom-equipe.cloudflareaccess.com`.
+2. Si ta règle générique couvre les invités, crée une application **Self-hosted** pour le seul hostname `jouer.super-nono.cc`, avec une politique **Bypass → Include Everyone**. L’application exacte prend priorité sur le domaine générique. Réserve cette règle au seul hostname invité. RecipeLog utilise le même principe d’exception ciblée sur une route. [Exemple RecipeLog](https://github.com/SuperNon0/recipelogs/blob/main/docs/connexion-cloudflare/README.md) · [Règles Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
+3. Dans **Networks → Connectors → Cloudflare Tunnels**, ouvre ton tunnel et ajoute les deux **Published application routes**. Les deux pointent vers `http://IP_DU_LXC:3000` lorsque `cloudflared` tourne sur une autre machine. Utilise `http://127.0.0.1:3000` si le connecteur tourne dans le LXC du jeu. Sur chaque route, garde le hostname public envoyé au serveur. Si tu renseignes **HTTP Host Header**, mets le sous-domaine public correspondant à la route.
+4. Active **Protect with Access** sur la route hôte avec le nom d’équipe et l’AUD utilisés à l’étape 1. Laisse ce réglage désactivé sur la route invitée. Jeux vérifie aussi le jeton hôte côté serveur, selon le même principe que le panneau de `site`. [Contrôle du JWT dans SuperNon0/site](https://github.com/SuperNon0/site/blob/main/panel/auth.py)
 
-Dans le conteneur LXC du jeu, renseigne ces quatre valeurs dans `/etc/jeux-cloudflare.env` :
+Dans le conteneur LXC, renseigne ces quatre valeurs dans `/etc/jeux-cloudflare.env`.
 
 ```ini
-JEUX_URL_HOTE=https://hote.example.com
-JEUX_URL_INVITES=https://jouer.example.com
+JEUX_URL_HOTE=https://hote-jeux.super-nono.cc
+JEUX_URL_INVITES=https://jouer.super-nono.cc
 CF_ACCESS_TEAM_DOMAIN=https://nom-equipe.cloudflareaccess.com
 CF_ACCESS_AUD=REMPLACER_PAR_LE_TAG_AUD
 ```
 
-Lance `systemctl edit jeux.service` et ajoute le bloc suivant :
+Lance `systemctl edit jeux.service` et ajoute ce bloc.
 
 ```ini
 [Service]
 EnvironmentFile=/etc/jeux-cloudflare.env
 ```
 
-Recharge le service avec `systemctl daemon-reload && systemctl restart jeux`. Pour une première vérification, ouvre le lien hôte en navigation privée et connecte-toi. Crée un salon, puis ouvre son lien invité dans une autre fenêtre privée. L’invité doit pouvoir rejoindre, tandis que la création du salon et l’utilisation de la session de l’hôte sont réservées au lien protégé. Le jeu exige une connexion sortante vers le domaine d’équipe pour récupérer les clés de signature de Cloudflare Access.
+Applique avec `systemctl daemon-reload && systemctl restart jeux`. Le jeu contacte le domaine de l’équipe pour récupérer les clés de signature. Vérifie ensuite les deux liens dans des fenêtres privées séparées.
+
+- **Lien hôte**. Cloudflare demande l’e-mail. Après connexion, le site affiche Administration et permet de créer un salon.
+- **Lien invité**. Ouvre le QR code créé par l’hôte. Le formulaire de pseudo s’affiche sans demande d’e-mail.
+- **Diagnostic**. Depuis le LXC, `curl -fsS http://127.0.0.1:3000/sante` indique la version et l’état du service. Avec Cloudflare activé, ouvre le site via l’un des deux sous-domaines. Un code 421 sur l’un de ces liens indique généralement que le nom d’hôte transmis à Jeux diffère de celui configuré.
 
 [Documentation Cloudflare Access et Tunnel](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
 
@@ -92,7 +97,9 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 
 - **Essayer la démo** ouvre une partie privée depuis un seul téléphone avec quatre joueurs simulés.
 - L’hôte choisit une composition prête à jouer ou règle les rôles à la main. Les compositions favorites sont gardées sur le navigateur.
-- L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes. Lorsque le vote est chronométré, les bulletins manquants deviennent des abstentions. Un débat chronométré peut être prolongé de 30 secondes.
+- Le compteur de partie affiche le temps écoulé hors pauses. Sur une nouvelle partie, les durées par défaut sont de 2 minutes pour le débat et de 1 minute pour le vote. La démo utilise 1 minute et 45 secondes. Tu peux régler ces durées dans le formulaire du salon.
+- Si la narration est active, le compte à rebours commence à la fin de l’annonce de la phase. L’animateur peut aussi lancer le chrono immédiatement. Si l’annonce ne se termine pas, le serveur lance le chrono au plus tard après 90 secondes. Le débat peut être prolongé de 30 secondes. À la fin du vote, les bulletins manquants deviennent des abstentions.
+- L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes.
 - Quand le salon est plein, l’hôte peut activer la narration sur son téléphone puis lancer la partie.
 - Chaque joueur retourne sa carte et confirme qu’il est prêt. Le serveur avance quand toutes les actions attendues sont terminées. L’hôte clôt le débat pour ouvrir le vote.
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
@@ -109,7 +116,7 @@ L’interface utilise le [kit Encre](https://github.com/SuperNon0/Biblioth-que-d
 
 Les annonces fournies sont dans [public/audio](public/audio). Pour modifier une annonce, remplace le fichier par un autre MP3 du même nom. Par exemple, remplace `le-village-sendort.mp3` pour l’annonce de début de nuit ou `election-maire.mp3` pour l’ouverture de l’élection. Le serveur lit les fichiers sur disque et les navigateurs vérifient leur fraîcheur. Aucun service de synthèse n’est requis pendant les parties.
 
-Le mode discret joue les transitions communes et masque les appels individuels de nuit. Les consignes des rôles concernés restent disponibles sur leurs écrans privés.
+Une pause de 2 secondes sépare les annonces. Le mode discret joue les transitions communes et masque les appels individuels de nuit. Les consignes des rôles concernés restent disponibles sur leurs écrans privés.
 
 ### Annonces ajoutées en 0.2.1
 

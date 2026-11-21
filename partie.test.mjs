@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -318,6 +318,11 @@ test('une partie reprend après redémarrage, avec les accès, un vote et les â
   const hote = await post('/salons', { nom: 'Alice', total: 5, voteSecondes: 45, composition: { villageois: 4, loups: 1 } }, null, 201);
   const racine = '/salons/' + hote.code + '/';
   const clients = [hote];
+  const temporaire = join(dossier, 'donnees', 'etat.json.tmp');
+  await mkdir(temporaire);
+  await post(racine + 'rejoindre', { nom: 'Bastien' }, null, 503);
+  assert.deepEqual((await (await fetch(adresse + '/api' + racine + 'joueurs')).json()).joueurs.map(j => j.nom), ['Alice']);
+  await rm(temporaire, { recursive: true });
   for (const nom of ['Bastien', 'Camille', 'Diane', 'Élie']) clients.push(await post(racine + 'rejoindre', { nom }));
   const etat = client => post(racine + 'etat', {}, client.token);
   const membre = (await etat(clients[1])).joueur;
@@ -361,7 +366,37 @@ test('une partie reprend après redémarrage, avec les accès, un vote et les â
   assert.equal(demoVue.partie.progression.reponses, 4);
   await post(demoRacine + 'rejoindre', { nom: 'Intrus' }, undefined, 404);
   await post(demoRacine + 'agir', { numero: demoVue.partie.numero, choix: null }, demo.token);
-  assert.equal((await post(demoRacine + 'etat', {}, demo.token)).partie.phase, 'voyante');
+  const reveil = (await post(demoRacine + 'etat', {}, demo.token)).partie;
+  assert.equal(reveil.phase, 'voyante');
+  await post(demoRacine + 'narration', { active: true }, demo.token);
+  await post(demoRacine + 'agir', { numero: reveil.numero, choix: reveil.action.cibles[0] }, demo.token);
+  const debat = (await post(demoRacine + 'etat', {}, demo.token)).partie;
+  assert.equal(debat.phase, 'debat');
+  assert.equal(debat.temps.attente, true);
+  assert.equal(debat.temps.duree, 60);
+  await post(demoRacine + 'chronometre', { partieId: 'ancienne-partie', annonce: debat.temps.annonce }, demo.token);
+  assert.equal((await post(demoRacine + 'etat', {}, demo.token)).partie.temps.attente, true);
+  await post(demoRacine + 'chronometre', { partieId: debat.id, phase: debat.temps.phase - 1 }, demo.token);
+  assert.equal((await post(demoRacine + 'etat', {}, demo.token)).partie.temps.attente, true);
+  await post(demoRacine + 'chronometre', { partieId: debat.id, annonce: debat.temps.annonce }, demo.token);
+  const chrono = (await post(demoRacine + 'etat', {}, demo.token)).partie.temps;
+  assert.ok(chrono.echeance - Date.now() > 59_000);
+
+  await arreter();
+  const fichierEtat = join(dossier, 'donnees', 'etat.json');
+  const ancienneSauvegarde = JSON.parse(await readFile(fichierEtat, 'utf8'));
+  const ancienneDemo = ancienneSauvegarde.salons.find(salon => salon.code === demo.code);
+  ancienneDemo.config.debatSecondes = 0;
+  ancienneDemo.partie.tour.echeance = null;
+  delete ancienneDemo.partie.debutPartie;
+  delete ancienneDemo.partie.tempsSuspendu;
+  await writeFile(fichierEtat, JSON.stringify(ancienneSauvegarde));
+  await demarrer();
+  const repriseDemo = (await post(demoRacine + 'etat', {}, demo.token)).partie;
+  assert.equal(repriseDemo.id, debat.id);
+  assert.equal(repriseDemo.phase, 'debat');
+  assert.ok(repriseDemo.temps.echeance - Date.now() > 59_000);
+  assert.ok(Number.isFinite(repriseDemo.chronoPartie.debut));
 });
 
 
@@ -388,4 +423,31 @@ test('les annonces nocturnes suivent les phases et restent disponibles dans l’
   const fichiers = await readdir(new URL('./public/audio/', import.meta.url));
   for (const { fichier } of partie.annonces) assert.ok(fichiers.includes(fichier + '.mp3'), fichier);
   assert.equal(partie.annonces.some(a => a.fichier === 'aucun-vote-elimination'), true);
+});
+
+
+test('la fin de l’annonce démarre le chrono partagé et le délai de secours reste borné', () => {
+  const joueurs = ['Alice', 'Bastien', 'Camille', 'Diane', 'Élie'].map(nom => ({ id: nom, nom }));
+  const partie = new Partie(joueurs, { ...verifierConfiguration(5, { villageois: 4, loups: 1 }),
+    hote: 'Alice', narration: true, debatSecondes: 60, voteSecondes: 45 });
+  partie.debat();
+  const debut = partie.tour.debut;
+  const annonce = partie.vue('Alice').temps.annonce;
+  assert.deepEqual(partie.vue('Bastien').temps, { attente: true, duree: 60, phase: partie.tour.numero, annonce: undefined });
+  assert.equal(partie.demarrerChrono(annonce - 1, debut + 5000), false);
+  assert.equal(partie.actualiserTemps(debut + 85_000), false);
+  partie.geler('manuelle', debut + 5000);
+  assert.equal(partie.demarrerChrono(annonce, debut + 6000), false);
+  assert.equal(partie.vue('Alice').chronoPartie.arrete, debut + 5000);
+  partie.reprendre(debut + 9000);
+  assert.equal(partie.vue('Alice').chronoPartie.suspendu, 4000);
+  assert.equal(partie.demarrerChrono(annonce, debut + 10_000), true);
+  assert.equal(partie.vue('Bastien').temps.echeance, debut + 70_000);
+  assert.equal(partie.actualiserTemps(debut + 70_000), true);
+
+  const ouvertureVote = partie.tour.debut;
+  assert.equal(partie.vue('Bastien').temps.attente, true);
+  assert.equal(partie.actualiserTemps(ouvertureVote + 89_999), false);
+  assert.equal(partie.actualiserTemps(ouvertureVote + 90_000), true);
+  assert.equal(partie.vue('Alice').temps.echeance, ouvertureVote + 135_000);
 });

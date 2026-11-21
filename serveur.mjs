@@ -75,6 +75,7 @@ async function modeAcces(req) {
 
 const salons = new Map();
 const presenceValide = 15_000;
+const dureeDebatDemo = 60;
 const dureeSalon = 24 * 60 * 60_000;
 const dureeDemo = 2 * 60 * 60_000;
 const dureeReprise = 10 * 60_000;
@@ -95,7 +96,7 @@ function sauvegarder() {
     renameSync(temporaire, fichierDonnees);
     dernierEnregistrement = date;
   } catch (incident) {
-    rmSync(temporaire, { force: true });
+    try { rmSync(temporaire, { force: true }); } catch {}
     console.error('Échec de sauvegarde :', incident.code);
     throw erreurHttp(503, 'Le serveur ne parvient pas à sauvegarder les parties.');
   }
@@ -112,8 +113,13 @@ function charger() {
   son = archive.son ?? son;
   for (const { sessions, demandes, partie, ...entree } of archive.salons) {
     if (Date.now() - entree.activite >= limiteSalon(entree)) continue;
+    entree.config.narration = false;
+    if (entree.demo && !entree.config.debatSecondes) entree.config.debatSecondes = dureeDebatDemo;
     const salon = { ...entree, presence: new Map(), sessions: new Map(sessions), demandes: new Map(demandes),
       partie: partie ? Partie.charger(partie, entree.joueurs, entree.config) : null };
+    if (entree.demo && salon.partie?.tour.type === 'debat' && !partie.tour.echeance && !partie.tour.preparation) {
+      salon.partie.tour.echeance = (partie.pauseDepuis ?? archive.date) + dureeDebatDemo * 1000;
+    }
     salon.partie?.geler('absence', archive.date);
     salons.set(salon.code, salon);
   }
@@ -136,11 +142,13 @@ function enLigne(salon, id, maintenant = Date.now()) {
 function actualiserPartie(salon, maintenant = Date.now()) {
   const partie = salon.partie;
   if (!partie || partie.gagnant) return false;
+  if (!enLigne(salon, salon.config.hote, maintenant)) salon.config.narration = false;
   if (![...salon.presence.values()].some(date => maintenant - date < presenceValide)) {
     return partie.geler('absence', maintenant);
   }
   let change = partie.pause === 'absence' && partie.reprendre(maintenant);
   if (partie.pause) return change;
+  if (!salon.config.narration && partie.demarrerChrono(null, maintenant)) change = true;
   if (partie.actualiserTemps(maintenant)) change = true;
   if (salon.demo) {
     for (let i = 0; i < 64 && !partie.gagnant; i++) {
@@ -218,7 +226,7 @@ function creer(data, demo = false) {
   if (salons.size >= 500) throw erreurHttp(503, 'Le serveur a atteint sa capacité de salons.');
   const regles = verifierConfiguration(data.total, data.composition, data.ordre);
   const config = { ...regles, maire: data.maire === true, discret: data.discret === true,
-    debatSecondes: duree(data.debatSecondes), voteSecondes: duree(data.voteSecondes) };
+    debatSecondes: duree(data.debatSecondes ?? 120), voteSecondes: duree(data.voteSecondes ?? 60) };
   let code;
   do { code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''); }
   while (salons.has(code));
@@ -238,7 +246,8 @@ function creer(data, demo = false) {
     actualiserPartie(salon);
   }
   salons.set(code, salon);
-  sauvegarder();
+  try { sauvegarder(); }
+  catch (incident) { salons.delete(code); throw incident; }
   return { code, token: cle };
 }
 
@@ -280,9 +289,18 @@ function gerer(salon, action, data, token, mode) {
   }
   if (action === 'rejoindre') {
     if (salon.partie || salon.joueurs.length >= salon.total) throw new Error('Ce salon est complet ou la partie a commencé.');
-    const result = { code: salon.code, token: session(salon, ajouter(salon, data.nom)) };
-    sauvegarder();
-    return result;
+    const activite = salon.activite;
+    const nouveau = ajouter(salon, data.nom);
+    const cle = session(salon, nouveau);
+    try { sauvegarder(); }
+    catch (incident) {
+      salon.joueurs.pop();
+      salon.sessions.delete(cle);
+      salon.presence.delete(nouveau.id);
+      salon.activite = activite;
+      throw incident;
+    }
+    return { code: salon.code, token: cle };
   }
   if (action === 'recuperer') {
     if (!salon.joueurs.some(j => j.id === data.joueur)) throw new Error('Cette place n’existe plus.');
@@ -309,6 +327,7 @@ function gerer(salon, action, data, token, mode) {
   if (action === 'apercu') return resume(salon, joueur);
   if (action === 'absence') {
     salon.presence.delete(joueur);
+    if (joueur === salon.config.hote) salon.config.narration = false;
     if (actualiserPartie(salon)) sauvegarder();
     return resume(salon, joueur);
   }
@@ -317,10 +336,32 @@ function gerer(salon, action, data, token, mode) {
   if (action === 'etat') return vue(salon, joueur);
   if (action === 'agir') {
     if (!salon.partie) throw new Error('La partie n’a pas commencé.');
-    salon.partie.agir(joueur, data.numero, data.choix);
-    actualiserPartie(salon);
-    sauvegarder();
+    const precedent = fichierDonnees && structuredClone(salon.partie.sauvegarde());
+    try {
+      salon.partie.agir(joueur, data.numero, data.choix);
+      actualiserPartie(salon);
+      sauvegarder();
+    } catch (incident) {
+      if (precedent) salon.partie = Partie.charger(precedent, salon.joueurs, salon.config);
+      throw incident;
+    }
     return vue(salon, joueur);
+  }
+  if (action === 'narration') {
+    if (joueur !== salon.config.hote) throw erreurHttp(403, 'La narration utilise le téléphone de l’hôte.');
+    salon.config.narration = data.active === true;
+    if (!salon.config.narration && salon.partie?.demarrerChrono()) sauvegarder();
+    return { active: salon.config.narration };
+  }
+  if (action === 'chronometre') {
+    if (!animateur(salon, joueur)) throw erreurHttp(403, 'Action réservée à l’animateur du salon.');
+    if (data.annonce !== undefined && joueur !== salon.config.hote) {
+      throw erreurHttp(403, 'La narration utilise le téléphone de l’hôte.');
+    }
+    const partie = salon.partie;
+    if (partie?.id === data.partieId && (data.annonce !== undefined || data.phase === partie.tour.numero) &&
+        partie.demarrerChrono(data.annonce)) sauvegarder();
+    return { ok: true };
   }
   if (['pause', 'reprendre', 'passer', 'prolonger'].includes(action)) {
     if (!animateur(salon, joueur)) throw erreurHttp(403, 'Action réservée à l’animateur du salon.');
@@ -498,7 +539,7 @@ const serveur = createServer(async (req, res) => {
     if (req.method === 'POST' && chemin === '/api/demo') {
       await lire(req);
       return json(res, 201, creer({ nom: 'Toi', total: 5,
-        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, voteSecondes: 45 }, true));
+        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, debatSecondes: dureeDebatDemo, voteSecondes: 45 }, true));
     }
     if (req.method === 'POST' && chemin === '/api/salons') {
       if (mode === 'invite') return json(res, 403, { erreur: 'Seul le lien hôte permet de créer un salon.' });

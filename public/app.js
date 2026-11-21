@@ -79,7 +79,10 @@ let contexteAudio;
 const gainsAudio = new WeakMap();
 let choixCible = { numero: undefined, valeur: null };
 let son = false, lecture = false, dernierSon = 0, piste = 0, file = [];
-let reprendrePiste;
+let reprendrePiste, minuterieSon;
+let prochainSon = 0;
+let declarationNarration = Promise.resolve();
+const delaiEntreAnnonces = 2000;
 let renduPage = '';
 let theme = sauvegarde.lire('jeux-theme');
 theme = { clair: 'light', sombre: 'dark', light: 'light', dark: 'dark', auto: 'auto' }[theme] ?? 'auto';
@@ -176,20 +179,39 @@ function reglerVolume(media, volume) {
 
 function stopperNarration() {
   reprendrePiste = null;
+  clearTimeout(minuterieSon);
+  minuterieSon = null;
+  prochainSon = 0;
   piste++;
   lecteur.pause();
   lecture = false;
   file = [];
 }
 
-function annoncesSonores(annonces, depuis) {
-  return annonces.filter(a => a.id > depuis && /^[a-z-]+$/.test(a.fichier ?? '')).map(a => a.fichier);
+function annoncesSonores(partie, depuis) {
+  return (partie?.annonces ?? []).filter(a => a.id > depuis && /^[a-z-]+$/.test(a.fichier ?? ''))
+    .map(a => ({ id: a.id, fichier: a.fichier, partieId: partie.id }));
+}
+
+function declarerNarration(active) {
+  const salle = code;
+  const acces = token;
+  declarationNarration = declarationNarration.then(() => api('narration', { active }, acces, salle))
+    .catch(() => {
+      if (salle === code && acces === token) afficherAvis('Le serveur n’a pas pu synchroniser la narration.', 4500);
+    });
 }
 
 function pisteSuivante() {
-  if (!son || lecture || !file.length || etat?.partie?.pause) return;
+  if (!son || lecture || !file.length || minuterieSon || (etat?.partie?.pause && file[0] !== null)) return;
+  const attente = prochainSon - performance.now();
+  if (attente > 0) {
+    minuterieSon = setTimeout(() => { minuterieSon = null; pisteSuivante(); }, attente);
+    return;
+  }
   const id = ++piste;
-  const evenement = file.shift();
+  const annonce = file.shift();
+  const evenement = annonce?.fichier;
   const fichier = evenement ? configurationSon.associations[evenement] ?? `${evenement}.mp3` : null;
   lecture = true;
   reglerVolume(lecteur, configurationSon.volume);
@@ -201,6 +223,7 @@ function pisteSuivante() {
     if (erreurLecture.name === 'NotAllowedError') {
       son = false;
       stopperNarration();
+      declarerNarration(false);
       afficherAvis('Le navigateur bloque le son. Appuie sur « Activer le son » pour réessayer.');
       afficher();
     } else terminer(true);
@@ -212,6 +235,10 @@ function pisteSuivante() {
     lecture = false;
     reprendrePiste = null;
     if (echec && fichier) afficherAvis(`Annonce indisponible : ${fichier}`, 4000);
+    if (fichier && !echec) prochainSon = performance.now() + delaiEntreAnnonces;
+    if (annonce && annonce.partieId === etat?.partie?.id && annonce.id === etat.partie.temps?.annonce) {
+      api('chronometre', { annonce: annonce.id, partieId: annonce.partieId }).catch(() => {});
+    }
     pisteSuivante();
   }
 }
@@ -219,6 +246,7 @@ function pisteSuivante() {
 function actualiser(nouveau) {
   if (nouveau.son) configurationSon = nouveau.son;
   decalageHorloge = (nouveau.horloge ?? Date.now()) - Date.now();
+  if (!etat && nouveau.hote && !son) declarerNarration(false);
   const precedente = etat?.partie;
   const partie = nouveau.partie;
   if (precedente?.id !== partie?.id) {
@@ -235,7 +263,7 @@ function actualiser(nouveau) {
     ? partie.historique.at(-1) : null;
   etat = nouveau;
   if (son && nouveau.hote) {
-    file.push(...annoncesSonores(annonces, dernierSon));
+    file.push(...annoncesSonores(partie, dernierSon));
     if (partie?.pause) {
       if (!precedente?.pause && lecture) lecteur.pause();
     } else if (lecture && precedente?.pause) reprendrePiste?.();
@@ -578,7 +606,7 @@ function vuePhase(p) {
   return `<section class="panneau phase">
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
       <span class="lbl-mono">${label}</span><h2 class="ttl">${titre} ${aide('phase', titre, texte)}</h2></div>
-      ${p.temps ? `<output class="temps-partie mono" data-temps aria-label="Temps restant">–</output>` : ''}</div>
+    </div>
     ${derniere ? `<div class="notice">${icone('list', 16)}${echapper(derniere.message)}</div>` : ''}
     ${progression ? `<div class="progression"><div><span>${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}</span>
       <strong class="mono">${progression.reponses}/${progression.total}</strong></div>
@@ -590,9 +618,19 @@ function vuePhase(p) {
     ${p.phase === 'distribution' && etat.hote ? boutonSon() : ''}
     ${etat.anime ? `<div class="actions commandes-phase">
       ${action(p.pause ? 'Reprendre' : 'Mettre en pause', p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}
+      ${p.temps?.attente && !p.pause ? action('Démarrer le chrono', 'play', 'chronometre', 'gh') : ''}
       ${p.peutProlonger ? action('+30 s de débat', 'plus', 'prolonger', 'gh') : ''}
       ${p.peutPasser ? action('Passer les absents', 'chev', 'passer', 'gh') + aide('absents', 'Actions des absents', 'Après 15 secondes, tu peux passer les actions des personnes hors ligne. Leurs votes manquants comptent comme des abstentions.') : ''}
     </div>` : ''}</section>`;
+}
+
+function chronos(p) {
+  const label = p.phase === 'debat' ? 'Temps de parole' : p.phase === 'election' ? 'Élection' : p.phase === 'vote' ? 'Temps de vote' : '';
+  return `<div class="chronos" aria-label="Chronomètres">
+    <div class="chrono">${icone('clock', 18)}<span>Partie</span><time class="mono" data-temps-total role="timer">0:00</time></div>
+    ${label ? `<div class="chrono chrono-phase">${icone(p.phase === 'debat' ? 'chat' : 'list', 18)}<span>${label}</span>
+       <time class="mono" data-temps role="timer">${p.temps?.attente ? 'Après l’annonce' : p.temps ? '–' : 'Sans limite'}</time></div>` : ''}
+  </div>`;
 }
 
 function partie() {
@@ -600,6 +638,7 @@ function partie() {
   return `${entetePage(etat.demo && zone === 'partie' ? 'Démo' : zones[zone][0],
       `${etat.demo ? 'Quatre joueurs simulés' : `Salon <span class="mono">${code}</span>`}${p.jour ? ` · Tour ${p.jour}` : ''}`,
       action('Options du salon', 'dots', 'plus', 'gh'))}
+    ${chronos(p)}
     ${etapes(p)}
     <div class="grille-partie"><div class="pile">
       ${zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p)}
@@ -706,13 +745,26 @@ function panneauAdmin() {
   </section></div>`;
 }
 
+function formaterChrono(secondes) {
+  return `${Math.floor(secondes / 60)}:${String(secondes % 60).padStart(2, '0')}`;
+}
+
 function actualiserCompteur() {
+  const partie = etat?.partie;
+  if (!partie) return;
+  const maintenant = Date.now() + decalageHorloge;
   const sortie = app.querySelector('[data-temps]');
-  const temps = etat?.partie?.temps;
-  if (!sortie || !temps) return;
-  const maintenant = temps.pauseDepuis ?? Date.now() + decalageHorloge;
-  const restant = Math.max(0, Math.ceil((temps.echeance - maintenant) / 1000));
-  sortie.value = `${Math.floor(restant / 60)}:${String(restant % 60).padStart(2, '0')}`;
+  const temps = partie.temps;
+  if (sortie && temps?.echeance) {
+    const restant = Math.max(0, Math.ceil((temps.echeance - (temps.pauseDepuis ?? maintenant)) / 1000));
+    sortie.textContent = formaterChrono(restant);
+  }
+  const total = app.querySelector('[data-temps-total]');
+  const chrono = partie.chronoPartie;
+  if (total && chrono) {
+    const duree = Math.max(0, Math.floor(((chrono.arrete ?? maintenant) - chrono.debut - chrono.suspendu) / 1000));
+    total.textContent = formaterChrono(duree);
+  }
 }
 
 function afficher() {
@@ -1262,10 +1314,12 @@ document.addEventListener('click', event => {
       const partie = etat.partie;
       if (partie) {
         const depuis = partie.annonceDepuis ?? Math.max(0, partie.annonces.length - 1);
-        file.push(...annoncesSonores(partie.annonces, depuis));
+        if (partie.pause) file.push(null);
+        file.push(...annoncesSonores(partie, depuis));
       } else file.push(null);
       pisteSuivante();
     } else stopperNarration();
+    declarerNarration(son);
     afficher();
     return;
   }
@@ -1292,6 +1346,11 @@ document.addEventListener('click', event => {
       reglerVolume(lecteurTest, Number(form.elements.volume.value));
       lecteurTest.hidden = false;
       await lecteurTest.play();
+      return;
+    }
+    if (id === 'chronometre') {
+      await api('chronometre', { partieId: etat.partie.id, phase: etat.partie.temps?.phase });
+      actualiser(await api('etat', {}));
       return;
     }
     if (['pause', 'reprendre', 'passer', 'prolonger'].includes(id)) {

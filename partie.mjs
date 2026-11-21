@@ -25,6 +25,8 @@ export class Partie {
     this.id = randomUUID();
     this.numero = numero;
     this.jour = 0;
+    this.debutPartie = Date.now();
+    this.tempsSuspendu = 0;
     this.maire = null;
     this.pause = null;
     this.potions = { soin: true, poison: true };
@@ -48,6 +50,8 @@ export class Partie {
       joueurs, config, cartes: new Map(etat.cartes), vivants: new Set(etat.vivants),
       historiques: new Map(etat.historiques),
       finAnnoncePhase: etat.finAnnoncePhase ?? etat.annonces.length,
+      debutPartie: etat.debutPartie ?? etat.tour.debut,
+      tempsSuspendu: etat.tempsSuspendu ?? 0,
       tour: { ...etat.tour, reponses: new Map(etat.tour.reponses) },
     });
   }
@@ -72,7 +76,9 @@ export class Partie {
     if (!this.pause) return false;
     const retard = Math.max(0, maintenant - this.pauseDepuis);
     this.tour.debut += retard;
+    this.tempsSuspendu += retard;
     if (this.tour.echeance) this.tour.echeance += retard;
+    if (this.tour.preparation) this.tour.preparation.limite += retard;
     this.pause = null;
     this.pauseDepuis = null;
     return true;
@@ -84,8 +90,20 @@ export class Partie {
     tour.echeance = Math.min(tour.echeance + 30_000, Date.now() + 900_000);
   }
 
+  demarrerChrono(annonce = null, maintenant = Date.now()) {
+    const { preparation, duree } = this.tour;
+    if (this.pause || !preparation || (annonce !== null && annonce !== preparation.annonce)) return false;
+    this.tour.echeance = maintenant + duree * 1000;
+    delete this.tour.preparation;
+    return true;
+  }
+
   actualiserTemps(maintenant) {
-    if (this.pause || !this.tour.echeance || maintenant < this.tour.echeance) return false;
+    if (this.pause) return false;
+    if (this.tour.preparation) {
+      return maintenant >= this.tour.preparation.limite && this.demarrerChrono(null, maintenant);
+    }
+    if (!this.tour.echeance || maintenant < this.tour.echeance) return false;
     if (this.tour.type === 'debat') this.ouvrirVote();
     else this.terminerTour();
     return true;
@@ -117,9 +135,12 @@ export class Partie {
     const debut = Date.now();
     const duree = type === 'debat' ? this.config.debatSecondes
       : ['election', 'vote'].includes(type) ? this.config.voteSecondes : 0;
-    this.tour = { type, acteurs, cibles, numero: ++this.numero, reponses: new Map(), debut,
-      echeance: duree ? debut + duree * 1000 : null, annonceDepuis: this.finAnnoncePhase ?? 0 };
+    const differe = Boolean(duree && fichier && this.config.narration);
+    this.tour = { type, acteurs, cibles, numero: ++this.numero, reponses: new Map(), debut, duree,
+      echeance: duree && !differe ? debut + duree * 1000 : null,
+      annonceDepuis: this.finAnnoncePhase ?? 0 };
     if (fichier) this.annoncer(fichier);
+    if (differe) this.tour.preparation = { annonce: this.annonces.length, limite: debut + 90_000 };
     this.finAnnoncePhase = this.annonces.length;
   }
 
@@ -307,10 +328,16 @@ export class Partie {
     const concerne = acteurs.includes(id) && !reponses.has(id);
     const peutAgir = concerne && !this.pause;
     const nuit = this.config.ordre.includes(type);
+    const { preparation, echeance, duree, debut } = this.tour;
+    let temps;
+    if (preparation) temps = { attente: true, duree, phase: numero, annonce: id === this.config.hote ? preparation.annonce : undefined };
+    else if (echeance) temps = { echeance, pauseDepuis: this.pauseDepuis };
     return {
       id: this.id, jour: this.jour, maire: this.maire, vivants: [...this.vivants],
       phase: nuit && !concerne ? 'nuit' : type, pause: this.pause,
-      temps: this.tour.echeance ? { echeance: this.tour.echeance, pauseDepuis: this.pauseDepuis } : undefined,
+      temps,
+      chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
+        arrete: type === 'fin' ? debut : this.pauseDepuis },
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
       numero: peutAgir ? numero : undefined, gagnant: this.gagnant, annonces: this.annonces, annonceDepuis: id === this.config.hote ? this.tour.annonceDepuis : undefined,
       progression: ['distribution', 'election', 'vote'].includes(type)

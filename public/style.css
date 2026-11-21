@@ -358,3 +358,21 @@ form, .options, .champ-jeu, .faq { display: grid; gap: 10px; }
 .fiche-revelation { display: grid; gap: 8px; justify-items: center; text-align: center; }
 .fiche-revelation h3 { font-size: 30px; }
 .fiche-revelation .art { width: min(100%, 210px); border-radius: var(--r-lg); box-shadow: var(--shadow-s); }
+
+.chronos {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px; margin-bottom: 12px;
+}
+.chrono {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 7px; min-height: 46px;
+  padding: 8px 11px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface);
+  color: var(--soft); font-size: 13px;
+}
+.chrono .i { color: var(--accent); }
+.chrono time { margin-inline-start: auto; color: var(--text); font-size: 14px; }
+.chrono-phase { border-color: var(--acc-line); }
+.chrono-phase time { color: var(--accent); }
+@media (max-width: 400px) {
+  .chrono { padding-inline: 8px; }
+  .chrono-phase time { margin-left: auto; }
+}
