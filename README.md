@@ -104,7 +104,18 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - Chaque joueur retourne sa carte et confirme qu’il est prêt. Le serveur avance quand toutes les actions attendues sont terminées. L’hôte clôt le débat pour ouvrir le vote.
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
 
-En cas d’égalité au vote des loups, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants. Le village gagne une fois le dernier loup éliminé.
+En cas d’égalité au vote des loups, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Le village gagne une fois le dernier loup éliminé. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants, sauf si un couple de camps opposés est encore en jeu.
+
+### Rôles optionnels
+
+Active ces rôles dans **Personnaliser les règles** à la création du salon. La composition **Village étendu** les réunit tous pour 12 joueurs.
+
+| Rôle | Pouvoir |
+| --- | --- |
+| Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre le nom de son partenaire sur son téléphone. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
+| Salvateur | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. |
+| Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
+| Corbeau | Marque un autre joueur chaque nuit. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 
 ## Retrouver un salon
 
@@ -132,6 +143,23 @@ Les 24 enregistrements d’origine sont conservés. Les annonces ci-dessous sont
 | `egalite-vote-hote.mp3` | L’égalité persiste. Relancez le vote ou tirez au sort parmi les personnes à égalité. |
 | `tir-chasseur.mp3` | Le Chasseur a utilisé son dernier tir. Consultez le résultat sur votre téléphone. |
 | `match-nul.mp3` | La partie se termine. Aucun camp ne survit. |
+
+### Annonces ajoutées en 0.3.0
+
+Les dix nouvelles pistes utilisent également la voix française Tom de Piper.
+
+| Nom du fichier | Phrase |
+| --- | --- |
+| `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |
+| `fin-cupidon.mp3` | Cupidon se rendort. |
+| `amoureux-lies.mp3` | Les amoureux découvrent leur lien sur leur téléphone. |
+| `mort-amoureux.mp3` | Deux personnes étaient liées. La personne encore en jeu a été emportée avec l’autre. |
+| `victoire-amoureux.mp3` | Les amoureux sont les derniers survivants. Ils remportent la partie ensemble. |
+| `salvateur.mp3` | Le Salvateur se réveille. Choisis la personne que tu veux protéger cette nuit. |
+| `fin-salvateur.mp3` | Le Salvateur se rendort. |
+| `corbeau.mp3` | Le Corbeau se réveille. Choisis la personne qui recevra deux voix contre elle au prochain vote d’élimination. |
+| `fin-corbeau.mp3` | Le Corbeau se rendort. |
+| `marque-corbeau.mp3` | Le Corbeau a laissé une marque. La personne désignée commencera le prochain vote d’élimination avec deux voix contre elle. |
 
 ## Vérifier
 

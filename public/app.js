@@ -14,13 +14,22 @@ const roles = {
   voyante: { nom: 'Voyante', camp: 'Village', pouvoir: 'Découvre le rôle d’une personne chaque nuit. Tes révélations restent dans ton journal privé.' },
   sorciere: { nom: 'Sorcière', camp: 'Village', pouvoir: 'Tu as une potion de soin et une de poison. Chacune ne s’utilise qu’une fois.' },
   chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, choisis une personne à emporter.' },
+  cupidon: { nom: 'Cupidon', camp: 'Village', pouvoir: 'La première nuit, lie deux personnes, toi compris si tu le veux. Si l’une meurt, l’autre meurt de chagrin. Un couple formé d’un loup et d’un membre du village gagne s’il reste seul en vie.' },
+  salvateur: { nom: 'Salvateur', camp: 'Village', pouvoir: 'Protège une personne de l’attaque des loups, toi compris. D’une nuit à la suivante, choisis une personne différente ou passe ton tour.' },
+  ancien: { nom: 'Ancien', camp: 'Village', pouvoir: 'Tu survis à la première attaque des loups qui te touche. Le poison et le vote peuvent t’éliminer dès la première fois.' },
+  corbeau: { nom: 'Corbeau', camp: 'Village', pouvoir: 'Chaque nuit, désigne une autre personne. Elle reçoit deux voix contre elle au premier tour du prochain vote d’élimination si elle survit à la nuit.' },
 };
+const rolesOptionnels = ['voyante', 'sorciere', 'chasseur', 'cupidon', 'salvateur', 'ancien', 'corbeau'];
+const nouveauxRoles = rolesOptionnels.slice(3);
 const phases = {
   distribution: ['Distribution', 'Découvre ton rôle', 'Retourne ta carte à l’abri des regards, puis indique que tu es prêt.', 'layers'],
   nuit: ['Nuit', 'Le village dort', 'Les personnes appelées agissent sur leur téléphone. La suite s’affichera ici.', 'moon'],
+  cupidon: ['Nuit', 'Forme un couple', roles.cupidon.pouvoir, 'heart'],
   voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
+  salvateur: ['Nuit', 'Choisis qui protéger', roles.salvateur.pouvoir, 'shield'],
   loups: ['Nuit', 'Choisissez votre cible', 'Vote pour la personne que ta meute attaquera cette nuit.', 'moon'],
   sorciere: ['Nuit', 'Choisis tes potions', 'Tu peux garder tes potions pour une autre nuit.', 'sparkle'],
+  corbeau: ['Nuit', 'Choisis qui marquer', roles.corbeau.pouvoir, 'moon'],
   debat: ['Jour', 'Le village débat', 'Discutez à voix haute. L’hôte ouvre le vote quand tout le monde est prêt.', 'chat'],
   election: ['Élection', 'Élisez le maire', 'Le maire a une voix double lors des votes d’élimination et départage les égalités.', 'star'],
   egaliteElection: ['Élection', 'Égalité à l’élection', 'L’hôte peut relancer le vote ou tirer au sort parmi les personnes à égalité.', 'dice'],
@@ -503,14 +512,34 @@ function etapes(p) {
 
 function choixJoueurs(p) {
   if (choixCible.numero !== p.numero) choixCible = { numero: p.numero, valeur: null };
-  const textes = { voyante: 'Examiner', loups: 'Confirmer la cible', election: 'Envoyer mon vote',
+  const textes = { salvateur: 'Protéger', corbeau: 'Marquer', loups: 'Confirmer la cible', election: 'Envoyer mon vote',
     vote: 'Envoyer mon vote', departage: 'Confirmer le départage', chasseur: 'Confirmer le tir', succession: 'Désigner le maire' };
   return `<form data-form="cible" data-numero="${p.numero}">
     <fieldset class="liste-cibles"><legend class="sr">Joueurs disponibles</legend>${p.action.cibles.map(id => `
       <label class="cible"><input type="radio" required name="cible" value="${id}" ${choixCible.valeur === id ? 'checked' : ''}>
       <span class="avatar">${echapper(initiales(etiquette(id)))}</span><strong>${echapper(etiquette(id))}${id === etat.joueur ? ' <small>· Toi</small>' : ''}</strong>
-      ${p.maire === id ? medaille : ''}</label>`).join('')}</fieldset>
-    <button class="btn pri" data-envoi>${icone('check', 18)}${textes[p.phase]}</button></form>`;
+      ${p.maire === id ? medaille : ''}
+      ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}</fieldset>
+    <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${textes[p.phase]}</button>
+    ${p.phase === 'salvateur' ? action('Passer cette nuit', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
+}
+
+function choixCupidon(p) {
+  const cibles = p.action.cibles.map(id => `<option value="${id}">${echapper(etiquette(id))}${id === etat.joueur ? ' · Toi' : ''}</option>`).join('');
+  return `<form data-form="cupidon" data-numero="${p.numero}">
+    <label class="champ-jeu">Première personne<select name="premier" required><option value="">Choisir…</option>${cibles}</select></label>
+    <label class="champ-jeu">Deuxième personne<select name="second" required><option value="">Choisir…</option>${cibles}</select></label>
+    <button class="btn pri" data-envoi>${icone('heart', 18)}Lier le couple</button>
+  </form>`;
+}
+
+function verifierCouple(form) {
+  const { premier, second } = form.elements;
+  second.setCustomValidity(second.value && premier.value === second.value ? 'Choisis deux personnes différentes.' : '');
+}
+
+function lienAmoureux(p) {
+  return p.amoureux ? `<p class="notice">${icone('heart', 18)}<span>Tu es lié à <strong>${echapper(p.amoureux)}</strong>.</span></p>` : '';
 }
 
 function ciblesVoyante(p) {
@@ -544,6 +573,7 @@ function commandes(p) {
     return `<div class="actions">${action('Voir ma carte', 'eye', 'ouvrir-carte')}${agir('Je suis prêt', 'check')}</div>`;
   }
   if (p.phase === 'voyante') return ciblesVoyante(p);
+  if (p.phase === 'cupidon') return choixCupidon(p);
   if (p.phase === 'debat') return agir('Ouvrir le vote', 'arrow');
   if (['egaliteElection', 'egaliteVote'].includes(p.phase)) {
     return `<p class="soft">${p.action.cibles.map(id => echapper(etiquette(id))).join(' · ')}</p>
@@ -581,6 +611,7 @@ function carte(p) {
       <span class="face dos">${art('dos')}</span><span class="face recto">${art(p.role)}</span>
     </button>
     <div class="detail-carte" id="detail-carte">${detailCarte(p)}</div>
+    ${lienAmoureux(p)}
     ${p.action && p.phase === 'distribution' && revelee ? action('Je suis prêt', 'check', 'agir', 'pri', `data-numero="${p.numero}" data-envoi`) : ''}
   </section>`;
 
@@ -593,9 +624,11 @@ function carte(p) {
 
 function vuePhase(p) {
   if (p.phase === 'fin') {
-    const victoire = { village: 'Le village l’emporte', loups: 'La meute l’emporte', egalite: 'Aucun camp ne survit' }[p.gagnant];
+    const victoire = { village: 'Le village l’emporte', loups: 'La meute l’emporte',
+      amoureux: 'Les amoureux l’emportent', egalite: 'Aucun camp ne survit' }[p.gagnant];
+    const resultat = p.gagnant === 'amoureux' ? p.vivants.map(etiquette).map(echapper).join(' et ') : '';
     return afficheScene('scene-jour resultat', `<h2 class="ttl">${victoire}</h2>`,
-      'Les rôles de tous les joueurs sont révélés.',
+      resultat || 'Les rôles de tous les joueurs sont révélés.',
       etat.hote ? action(etat.demo ? 'Recommencer la démo' : 'Retour au salon', 'rotate', 'retour', 'pri') : '', `<span class="scene-etiquette">${icone('star', 16)}Partie terminée</span>`);
   }
   const [label, titre, texte, ic] = phases[p.phase];
@@ -608,6 +641,8 @@ function vuePhase(p) {
       <span class="lbl-mono">${label}</span><h2 class="ttl">${titre} ${aide('phase', titre, texte)}</h2></div>
     </div>
     ${derniere ? `<div class="notice">${icone('list', 16)}${echapper(derniere.message)}</div>` : ''}
+    ${p.marqueCorbeau ? `<div class="notice">${icone('list', 16)}${echapper(etiquette(p.marqueCorbeau))} reçoit deux voix au premier vote d’élimination.</div>` : ''}
+    ${lienAmoureux(p)}
     ${progression ? `<div class="progression"><div><span>${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}</span>
       <strong class="mono">${progression.reponses}/${progression.total}</strong></div>
       <progress value="${progression.reponses}" max="${progression.total}" aria-label="${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}"></progress></div>` : ''}
@@ -778,18 +813,25 @@ function afficher() {
   else html = accueil();
   if (html === renduPage) return;
   const focus = document.activeElement;
-  const formulaire = app.querySelector('[data-form="sorciere"]');
+  const formulaire = app.querySelector('[data-form="sorciere"], [data-form="cupidon"]');
   const valeurs = formulaire?.dataset.numero === String(etat?.partie?.numero) ? new FormData(formulaire) : null;
   const focusCible = focus?.name === 'cible' ? focus.value : null;
-  const focusPotion = formulaire?.contains(focus) ? focus.name : '';
+  const champActif = formulaire?.contains(focus) ? focus.name : '';
   app.innerHTML = html;
   renduPage = html;
   actualiserCompteur();
   if (valeurs) {
-    const champs = app.querySelector('[data-form="sorciere"]')?.elements;
-    if (champs?.soin) champs.soin.checked = valeurs.has('soin');
-    if (champs?.poison) champs.poison.value = valeurs.get('poison');
-    if (focusPotion) champs?.namedItem(focusPotion)?.focus({ preventScroll: true });
+    const nouveauFormulaire = app.querySelector(`[data-form="${formulaire.dataset.form}"]`);
+    if (nouveauFormulaire) {
+      for (const [nom, valeur] of valeurs) {
+        const champ = nouveauFormulaire.elements.namedItem(nom);
+        if (!champ) continue;
+        if (champ.type === 'checkbox') champ.checked = true;
+        else champ.value = valeur;
+      }
+      if (nouveauFormulaire.dataset.form === 'cupidon') verifierCouple(nouveauFormulaire);
+      if (champActif) nouveauFormulaire.elements.namedItem(champActif)?.focus({ preventScroll: true });
+    }
   }
   if (focusCible) {
     [...app.querySelectorAll('input[name="cible"]')].find(c => c.value === focusCible)?.focus({ preventScroll: true });
@@ -811,9 +853,9 @@ const formCreation = () => `<form data-form="creer">
       <label class="case"><input type="checkbox" name="discret">Appels de nuit discrets</label>
       <div class="options-roles">
         <label class="champ-jeu">Loups-Garous<input type="number" name="loups" min="1" max="2" value="1" required></label>
-        <div class="options"><label class="case"><input type="checkbox" name="voyante" checked>Voyante</label>
-        <label class="case"><input type="checkbox" name="sorciere" checked>Sorcière</label>
-        <label class="case"><input type="checkbox" name="chasseur" checked>Chasseur</label></div>
+        <div class="options">${rolesOptionnels.map(id =>
+          `<div class="ligne-option"><label class="case"><input type="checkbox" name="${id}" ${nouveauxRoles.includes(id) ? '' : 'checked'}>${roles[id].nom}</label>
+          ${aide(`composition-${id}`, roles[id].nom, roles[id].pouvoir)}</div>`).join('')}</div>
       </div>
       <label class="champ-jeu">Ordre de nuit<select name="ordre">
         <option value="voyante,loups,sorciere">Voyante → Loups → Sorcière</option>
@@ -837,6 +879,7 @@ const compositions = [
   ['Petite table · 5 joueurs', 5, 1, 'express'],
   ['Table classique · 8 joueurs', 8, 2, 'classique'],
   ['Grande table · 12 joueurs', 12, 3, 'classique'],
+  ['Village étendu · 12 joueurs', 12, 3, 'classique', nouveauxRoles],
 ];
 
 function optionsComposition() {
@@ -845,12 +888,16 @@ function optionsComposition() {
     favoris.map(({ nom }, index) => `<option value="favori-${index}">${echapper(nom)}</option>`).join('');
 }
 
+function ordreActif(ordre, estActif) {
+  return ['cupidon', ...ordre.split(',').flatMap(id => id === 'loups' ? ['salvateur', 'loups'] : [id]), 'corbeau'].filter(estActif);
+}
+
 function reglageSalon(donnees) {
   const total = Number(donnees.get('total'));
-  const composition = { loups: Number(donnees.get('loups')), voyante: Number(donnees.has('voyante')),
-    sorciere: Number(donnees.has('sorciere')), chasseur: Number(donnees.has('chasseur')) };
+  const composition = { loups: Number(donnees.get('loups')),
+    ...Object.fromEntries(rolesOptionnels.map(id => [id, Number(donnees.has(id))])) };
   composition.villageois = total - Object.values(composition).reduce((a, b) => a + b, 0);
-  return { total, composition, ordre: donnees.get('ordre').split(',').filter(id => composition[id]),
+  return { total, composition, ordre: ordreActif(donnees.get('ordre'), id => composition[id]),
     maire: donnees.has('maire'), discret: donnees.has('discret'), debatSecondes: Number(donnees.get('debatSecondes')),
     voteSecondes: Number(donnees.get('voteSecondes')) };
 }
@@ -860,17 +907,18 @@ function appliquerComposition(form) {
   const selection = champs.preset.value;
   const [source, index] = selection.split('-');
   if (source === 'modele') {
-    const [, total, loups, mode] = compositions[index];
+    const [, total, loups, mode, ajouts = []] = compositions[index];
     champs.total.value = total;
     champs.mode.value = mode;
     configurer(form, 'mode');
     champs.loups.value = loups;
+    for (const id of ajouts) champs[id].checked = true;
     champs.preset.value = selection;
   } else if (source === 'favori') {
     const choix = favoris[index]?.champs;
     if (choix) {
       for (const nom of ['total', 'mode', 'loups', 'ordre', 'debatSecondes', 'voteSecondes']) champs[nom].value = choix[nom];
-      for (const nom of ['maire', 'discret', 'voyante', 'sorciere', 'chasseur']) champs[nom].checked = choix[nom];
+      for (const nom of ['maire', 'discret', ...rolesOptionnels]) champs[nom].checked = Boolean(choix[nom]);
     }
   }
 }
@@ -884,7 +932,7 @@ function enregistrerFavori(form) {
   }
   const valeurs = {};
   for (const cle of ['total', 'mode', 'loups', 'ordre', 'debatSecondes', 'voteSecondes']) valeurs[cle] = champs[cle].value;
-  for (const cle of ['maire', 'discret', 'voyante', 'sorciere', 'chasseur']) valeurs[cle] = champs[cle].checked;
+  for (const cle of ['maire', 'discret', ...rolesOptionnels]) valeurs[cle] = champs[cle].checked;
   favoris = [{ nom, champs: valeurs }, ...favoris.filter(favori => favori.nom !== nom)].slice(0, 16);
   sauvegarde.ecrire(cleFavoris, JSON.stringify(favoris));
   champs.preset.innerHTML = optionsComposition();
@@ -893,7 +941,8 @@ function enregistrerFavori(form) {
 }
 
 function configurer(form, evenement) {
-  const { total, loups, voyante, sorciere, chasseur, mode, maire } = form.elements;
+  const champs = form.elements;
+  const { total, loups, voyante, sorciere, chasseur, mode, maire, ordre } = champs;
   if (evenement === 'preset') appliquerComposition(form);
   if (['total', 'mode'].includes(evenement)) {
     loups.value = Number(total.value) >= 12 ? 3 : Number(total.value) >= 8 ? 2 : 1;
@@ -901,17 +950,22 @@ function configurer(form, evenement) {
       sorciere.checked = chasseur.checked = mode.value === 'classique';
       maire.checked = mode.value === 'classique';
       voyante.checked = true;
+      for (const id of nouveauxRoles) champs[id].checked = false;
     }
   }
   const taille = Number(total.value);
   const nombreLoups = Number(loups.value);
-  const villageois = taille - nombreLoups - Number(voyante.checked) - Number(sorciere.checked) - Number(chasseur.checked);
+  const nombreSpeciaux = rolesOptionnels.filter(id => champs[id].checked).length;
+  const villageois = taille - nombreLoups - nombreSpeciaux;
   loups.max = Math.floor((taille - 1) / 2);
   for (const nom of ['debatSecondes', 'voteSecondes']) {
     const champ = form.elements[nom];
     champ.setCustomValidity(Number(champ.value) > 0 && Number(champ.value) < 15 ? '15 secondes au minimum, ou 0.' : '');
   }
   loups.setCustomValidity(villageois < 0 ? 'Il y a plus de rôles que de joueurs.' : '');
+  for (const option of ordre.options) {
+    option.textContent = ordreActif(option.value, id => id === 'loups' || champs[id].checked).map(id => roles[id].nom).join(' → ');
+  }
   form.querySelector('#projection').textContent = villageois >= 0
     ? `${nombreLoups} loup${nombreLoups > 1 ? 's' : ''} · ${villageois} villageois ordinaire${villageois > 1 ? 's' : ''}`
     : 'Réduis le nombre de rôles.';
@@ -989,7 +1043,7 @@ function contenuFeuille(type, contexte) {
     }
     case 'regles': return ['Comment jouer', `<div class="faq">
       <details open><summary>Comment rejoindre les autres ?</summary><p>Scanne le QR code de l’hôte ou saisis les six caractères du salon, puis choisis ton pseudo. Garde le même navigateur pour retrouver ta place.</p></details>
-      <details><summary>Que faire le jour et la nuit ?</summary><p>La nuit, seuls les rôles appelés agissent. Le jour, discute avec les autres, puis vote sur ton téléphone. La meute gagne si elle atteint la parité avec les autres survivants. Le village gagne s’il élimine tous les loups.</p></details>
+      <details><summary>Que faire le jour et la nuit ?</summary><p>La nuit, seuls les rôles appelés agissent. Le jour, discute avec les autres, puis vote sur ton téléphone. La meute gagne à la parité et le village gagne s’il élimine tous les loups. Si Cupidon a lié un loup et un membre du village, la partie continue jusqu’à la mort du couple ou sa victoire en tant que deux derniers survivants.</p></details>
       <details><summary>Que se passe-t-il si tout le monde quitte ?</summary><p>Le salon apparaît en pause dans Mes salons. Ouvre-le depuis le même navigateur pour retrouver ta place. Sur Proxmox, le salon est sauvegardé et reste accessible après un redémarrage. Il expire après 24 heures sans activité.</p></details>
       </div>`];
     default: return ['', ''];
@@ -1156,6 +1210,7 @@ document.addEventListener('change', event => {
     appliquerApparence();
   }
   if (champ.name === 'cible') choixCible.valeur = champ.value;
+  if (champ.form?.dataset.form === 'cupidon') verifierCouple(champ.form);
   if (champ.name === 'destination' && champ.form?.dataset.form === 'audio') {
     const nouveau = champ.form.querySelector('[data-nom-audio]');
     nouveau.hidden = champ.value !== 'ajouter';
@@ -1249,7 +1304,10 @@ document.addEventListener('submit', event => {
       afficherContenuFeuille('reprise');
       return;
     } else {
-      const choix = actionForm === 'cible' ? data.get('cible') : { soin: data.has('soin'), poison: data.get('poison') || null };
+      let choix;
+      if (actionForm === 'cible') choix = data.get('cible');
+      else if (actionForm === 'cupidon') choix = [data.get('premier'), data.get('second')];
+      else choix = { soin: data.has('soin'), poison: data.get('poison') || null };
       actualiser(await api('agir', { numero: Number(form.dataset.numero), choix }));
       return;
     }

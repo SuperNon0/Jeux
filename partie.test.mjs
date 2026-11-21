@@ -132,10 +132,10 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal((await etat(hote)).partie.progression.reponses, 0);
 });
 
-test('les 32 annonces sont disponibles en MP3', async () => {
+test('les 42 annonces sont disponibles en MP3', async () => {
   const dossier = new URL('./public/audio/', import.meta.url);
   const fichiers = (await readdir(dossier)).filter(nom => nom.endsWith('.mp3'));
-  assert.equal(fichiers.length, 32);
+  assert.equal(fichiers.length, 42);
   for (const fichier of fichiers) {
     const entree = await readFile(new URL(fichier, dossier));
     const balise = entree.subarray(0, 3).toString() === 'ID3';
@@ -144,6 +144,123 @@ test('les 32 annonces sont disponibles en MP3', async () => {
   }
 });
 
+function partieAvecRoles(cartes, options = {}) {
+  const joueurs = Object.keys(cartes).map(id => ({ id, nom: id }));
+  const composition = {};
+  for (const role of Object.values(cartes)) composition[role] = (composition[role] ?? 0) + 1;
+  const config = { ...verifierConfiguration(joueurs.length, composition), hote: joueurs[0].id, ...options };
+  const partie = new Partie(joueurs, config);
+  partie.cartes = new Map(Object.entries(cartes));
+  for (const { id } of joueurs) jouer(partie, id);
+  return partie;
+}
+
+function jouer(partie, id, choix = null) {
+  partie.agir(id, partie.vue(id).numero, choix);
+}
+
+function finirVoteAvecAbstentions(partie) {
+  partie.passer(partie.tour.acteurs.filter(id => !partie.tour.reponses.has(id)));
+}
+
+test('le Salvateur protège avant que l’Ancien ou la Sorcière n’interviennent', () => {
+  let partie = partieAvecRoles({
+    Alice: 'villageois', Bastien: 'salvateur', Camille: 'ancien', Diane: 'sorciere',
+    Élie: 'loups', Félix: 'villageois', Gaëlle: 'villageois',
+  });
+  assert.ok(partie.vue('Bastien').action.cibles.includes('Bastien'));
+  jouer(partie, 'Bastien', 'Camille');
+  partie = Partie.charger(JSON.parse(JSON.stringify(partie.sauvegarde())), partie.joueurs, partie.config);
+  jouer(partie, 'Élie', 'Camille');
+  assert.equal(partie.vue('Diane').action.soin, false);
+  jouer(partie, 'Diane', { soin: false, poison: null });
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Félix');
+  finirVoteAvecAbstentions(partie);
+  assert.ok(!partie.vue('Bastien').action.cibles.includes('Camille'));
+  jouer(partie, 'Bastien');
+  jouer(partie, 'Élie', 'Camille');
+  assert.equal(partie.vue('Diane').action.soin, false);
+  jouer(partie, 'Diane', { soin: false, poison: null });
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Gaëlle');
+  finirVoteAvecAbstentions(partie);
+  assert.ok(partie.vue('Bastien').action.cibles.includes('Camille'));
+  jouer(partie, 'Bastien', 'Bastien');
+  jouer(partie, 'Élie', 'Camille');
+  assert.equal(partie.vue('Diane').action.victime, 'Camille');
+  jouer(partie, 'Diane', { soin: false, poison: null });
+  assert.ok(!partie.vue('Alice').vivants.includes('Camille'));
+});
+
+test('la marque du Corbeau compte au premier vote d’élimination uniquement', () => {
+  const partie = partieAvecRoles({
+    Alice: 'villageois', Bastien: 'corbeau', Camille: 'ancien',
+    Diane: 'villageois', Élie: 'loups', Félix: 'villageois',
+  }, { maire: true, discret: true });
+  jouer(partie, 'Élie', 'Camille');
+  assert.equal(partie.vue('Alice').marqueCorbeau, null);
+  assert.ok(!partie.vue('Bastien').action.cibles.includes('Bastien'));
+  jouer(partie, 'Bastien', 'Félix');
+  assert.equal(partie.vue('Alice').marqueCorbeau, 'Félix');
+  assert.ok(!partie.annonces.some(a => ['corbeau', 'fin-corbeau'].includes(a.fichier)));
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Alice');
+  finirVoteAvecAbstentions(partie);
+  assert.equal(partie.vue('Alice').maire, 'Alice');
+  jouer(partie, 'Alice', 'Camille');
+  finirVoteAvecAbstentions(partie);
+  assert.deepEqual(partie.vue('Alice').action.cibles, ['Camille', 'Félix']);
+  assert.equal(partie.vue('Alice').phase, 'departage');
+  assert.equal(partie.vue('Alice').marqueCorbeau, null);
+});
+
+test('Cupidon lie en privé deux personnes distinctes lors de la première nuit', () => {
+  const partie = partieAvecRoles({
+    Alice: 'cupidon', Bastien: 'loups', Camille: 'loups', Diane: 'villageois', Élie: 'villageois',
+  });
+  assert.equal(partie.vue('Camille').phase, 'nuit');
+  assert.throws(() => jouer(partie, 'Alice', ['Alice', 'Alice']), /deux joueurs différents/);
+  jouer(partie, 'Alice', ['Alice', 'Bastien']);
+  assert.equal(partie.vue('Alice').amoureux, 'Bastien');
+  assert.equal(partie.vue('Bastien').amoureux, 'Alice');
+  assert.equal(partie.vue('Camille').amoureux, undefined);
+  assert.deepEqual(partie.annonces.slice(2, 6).map(a => a.fichier), ['cupidon', 'fin-cupidon', 'amoureux-lies', 'loups']);
+  jouer(partie, 'Bastien', 'Élie');
+  jouer(partie, 'Camille', 'Élie');
+  assert.equal(partie.vue('Alice').phase, 'debat');
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Camille');
+  finirVoteAvecAbstentions(partie);
+  assert.equal(partie.vue('Bastien').phase, 'loups');
+  jouer(partie, 'Bastien', 'Diane');
+  assert.equal(partie.vue('Alice').gagnant, 'amoureux');
+  assert.deepEqual(partie.vue('Alice').vivants, ['Alice', 'Bastien']);
+  assert.equal(partie.annonces.at(-1).fichier, 'victoire-amoureux');
+});
+
+test('une mort de chagrin s’applique une fois et reste compatible avec le Chasseur', () => {
+  const partie = partieAvecRoles({
+    Alice: 'cupidon', Bastien: 'chasseur', Camille: 'loups', Diane: 'villageois', Élie: 'villageois',
+  }, { discret: true });
+  jouer(partie, 'Alice', ['Alice', 'Bastien']);
+  jouer(partie, 'Camille', 'Bastien');
+  assert.equal(partie.vue('Bastien').phase, 'chasseur');
+  assert.ok(!partie.vue('Bastien').vivants.includes('Alice'));
+  assert.equal(partie.annonces.filter(a => a.fichier === 'mort-amoureux').length, 1);
+  assert.ok(!partie.annonces.some(a => ['cupidon', 'fin-cupidon', 'amoureux-lies'].includes(a.fichier)));
+  jouer(partie, 'Bastien', 'Camille');
+  assert.equal(partie.vue('Diane').gagnant, 'village');
+
+  const victimesDirectes = partieAvecRoles({
+    Alice: 'cupidon', Bastien: 'villageois', Camille: 'loups', Diane: 'sorciere', Élie: 'villageois',
+  });
+  jouer(victimesDirectes, 'Alice', ['Alice', 'Bastien']);
+  jouer(victimesDirectes, 'Camille', 'Alice');
+  jouer(victimesDirectes, 'Diane', { soin: false, poison: 'Bastien' });
+  assert.ok(!victimesDirectes.vue('Camille').vivants.some(id => ['Alice', 'Bastien'].includes(id)));
+  assert.ok(!victimesDirectes.annonces.some(a => a.fichier === 'mort-amoureux'));
+});
 
 test('une seconde égalité sans maire peut être départagée au tirage', () => {
   const joueurs = ['Alice', 'Bastien', 'Camille', 'Diane', 'Élie'].map(nom => ({ id: nom, nom }));
@@ -232,7 +349,11 @@ test('l’administration Cloudflare protège les salons, les MP3 et la mise à j
   const avant = await (await appel('/api/admin')).json();
   assert.equal(avant.salons[0].code, hoteSalon.code);
   assert.equal(avant.salons[0].joueurs, 2);
-  assert.equal(avant.audios.length, 32);
+  assert.equal(avant.audios.length, 42);
+  assert.ok(avant.annonces.includes('victoire-amoureux'));
+  const illustration = await appel('/illustrations/roles-extension.png', { domaine: invite });
+  assert.equal(illustration.headers.get('content-type'), 'image/png');
+  assert.equal(illustration.status, 200);
 
   const cheminAudio = '/api/admin/audio/test-annonce.mp3';
   const fichier = await readFile(new URL('./public/audio/le-village-sendort.mp3', import.meta.url));
