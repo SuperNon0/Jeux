@@ -143,7 +143,9 @@ Une pause de 2 secondes sépare les annonces. Le mode discret joue les transitio
 
 Les annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
 
-Dans les nouveaux salons, le prénom et le rôle sont annoncés après une élimination confirmée. Les 81 combinaisons prénom-rôle et les neuf pistes de rôle pour les bots figurent dans le [catalogue des annonces](public/annonces.json).
+Dans les nouveaux salons, une élimination confirmée s’annonce en deux pistes : `deces-<prénom>.mp3` (« Noë a perdu la vie. ») puis `role-<rôle>.mp3` (« Son rôle était Corbeau. »). Pour un bot ou un prénom sans piste, seule la piste du rôle est jouée. Toutes les phrases figurent dans le [catalogue des annonces](public/annonces.json).
+
+En narration classique, un rôle de nuit mort ou sans pouvoir (Sorcière sans potion utile) est quand même appelé, puis se rendort après 8 à 14 secondes. Le silence ne trahit donc rien. Le mode discret ne fait aucun appel individuel.
 
 | Nom du fichier | Phrase ou son |
 | --- | --- |
@@ -192,6 +194,29 @@ Dans les nouveaux salons, le prénom et le rôle sont annoncés après une élim
 | `victoire-village.mp3` | Le village a éliminé tous les Loups-Garous. Le village remporte la partie. |
 | `vote-elimination.mp3` | Le vote d’élimination est ouvert. Les joueurs encore en jeu peuvent voter sur leur téléphone. |
 | `voyante.mp3` | La Voyante se réveille. Choisis la personne dont tu veux découvrir le rôle. |
+
+## Voix du narrateur
+
+Les annonces utilisent la voix française **Tom** de [Piper](https://github.com/OHF-Voice/piper1-gpl), au volume de -19 LUFS. L’action GitHub [Voix du narrateur](.github/workflows/voix.yml) crée les MP3 qui manquent dès qu’une phrase est ajoutée à `public/annonces.json`, sur `main` ou sur une branche `claude/…`, et les enregistre dans `public/audio`. Pour écouter une phrase avant de l’utiliser, écris-la dans `outils/essai.txt` : l’action produit `outils/essais/essai.mp3`.
+
+Sur un ordinateur avec Python et FFmpeg :
+
+```sh
+pip install piper-tts==1.8.0
+python3 -m piper.download_voices fr_FR-tom-medium --download-dir outils/voix
+npm run voix                          # crée les MP3 manquants
+npm run voix -- --forcer loups        # refait une phrase modifiée
+```
+
+## Ajouter un rôle
+
+Chaque rôle tient dans un fichier de [public/loup-garou/roles](public/loup-garou/roles), lu à la fois par le serveur et par les téléphones : nom, camp, texte de la carte, image, place dans la nuit, phrases du narrateur et crochets du pouvoir (`agir`, `auReveil`, `surAttaque`, `surMort`, `surVote`, `victoire`).
+
+```sh
+npm run nouveau-role -- renard "Renard" --nuit --rang 25 --image "un renard roux au regard rusé"
+```
+
+Le script crée le fichier du rôle, l’inscrit dans le registre, ajoute ses phrases au catalogue, prépare `tests/renard.test.mjs` et écrit le prompt d’illustration pour ChatGPT dans `outils/prompts/renard.txt`. Il reste à coder le pouvoir, compléter les phrases (`npm run catalogue`) et le test, puis pousser : l’action GitHub crée les voix. Pour l’image, `npm run image-role -- renard image.png` la recadre en carré dans `public/illustrations/roles/`.
 
 ## Vérifier
 
