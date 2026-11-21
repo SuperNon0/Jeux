@@ -102,18 +102,19 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - Le formulaire règle les chronomètres en minutes. Par défaut, le débat dure 2 minutes, les votes et chaque choix de rôle 1 minute. Dans la démo, le débat dure 1 minute et le vote 0,75 minute. Indique 0 pour désactiver un chronomètre.
 - Le son est requis au lancement. Le téléphone de l’hôte joue les annonces et les autres écrans affichent le texte de l’annonce en cours. Les commandes et leur minuteur apparaissent après cette annonce. Si la lecture est interrompue, l’hôte réactive le son pour reprendre.
 - À la fin du délai, les bulletins manquants deviennent des abstentions. Un rôle individuel sans réponse passe son tour. Si le maire laisse expirer un départage, le jeu tire au sort parmi les personnes à égalité. Le débat peut être prolongé de 30 secondes.
-- L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes.
+- L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes, et celles de tout le monde après 45 secondes.
 - Quand le salon est plein, l’hôte peut activer la narration sur son téléphone puis lancer la partie.
 - Avant le tirage, **Ajouter un bot** permet à l’hôte de remplir les places libres. Ouvre deux écrans et ajoute trois bots pour essayer une composition de cinq joueurs.
 - L’hôte clique sur **Tirer les cartes**. Chaque joueur retourne sa carte et confirme **Je suis prêt**. L’hôte lance alors la partie, active le son et attend la fin du compte à rebours de 10 secondes.
 - La Voyante choisit une cible, consulte sa carte en privé, puis confirme **J’ai vu la carte** avant l’annonce de fin de tour.
 - L’élection du maire est activée par défaut dans le formulaire. Elle a lieu après le premier débat et avant le vote d’élimination.
 - Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Chaque joueur peut retourner la carte de la personne éliminée. L’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
-- Quand le Chasseur est éliminé par le vote, son dernier tir a lieu au réveil suivant. S’il est tué par les loups, il tire au réveil de la même nuit. Dans les deux cas, son choix s’ouvre après l’annonce du Chasseur et avant le débat.
+- Quand le Chasseur est éliminé par le vote ou par les loups, il tire aussitôt, avant le test de victoire. Tué la nuit, son choix s’ouvre au réveil, avant le débat. Si sa mort élimine déjà le dernier loup, le village gagne sans tir.
+- Après sa révélation, la Voyante a 20 secondes pour confirmer qu’elle a vu la carte, puis la nuit continue.
 - La Sorcière décide d’abord si elle utilise son soin quand il est disponible. Elle peut ensuite choisir une cible pour son poison ou le garder. Chaque choix dispose de son propre chronomètre.
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
 
-En cas d’égalité au vote des loups, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Le village gagne une fois le dernier loup éliminé. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants, sauf si un couple de camps opposés est encore en jeu.
+Chaque loup voit le choix des autres et peut changer le sien. La victime est fixée dès que toute la meute vise la même personne. Sans accord à la fin du délai, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Le village gagne une fois le dernier loup éliminé. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants, sauf si un couple de camps opposés est encore en jeu.
 
 ### Rôles optionnels
 
@@ -124,7 +125,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 | Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre le nom de son partenaire sur son téléphone. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
 | Salvateur | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. |
 | Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
-| Corbeau | Marque un autre joueur chaque nuit. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
+| Corbeau | Peut marquer un autre joueur chaque nuit, ou ne marquer personne. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 
 ## Retrouver un salon
 

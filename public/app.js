@@ -14,11 +14,11 @@ const roles = {
   loups: { nom: 'Loup-Garou', camp: 'Meute', pouvoir: 'Choisis une cible chaque nuit avec les membres de ta meute.' },
   voyante: { nom: 'Voyante', camp: 'Village', pouvoir: 'Découvre le rôle d’une personne chaque nuit. Tes révélations restent dans ton journal privé.' },
   sorciere: { nom: 'Sorcière', camp: 'Village', pouvoir: 'Tu as une potion de soin et une de poison. Chacune ne s’utilise qu’une fois.' },
-  chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, choisis une personne à emporter au réveil.' },
+  chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, tu emportes aussitôt une personne avec toi.' },
   cupidon: { nom: 'Cupidon', camp: 'Village', pouvoir: 'La première nuit, lie deux personnes, toi compris si tu le veux. Si l’une meurt, l’autre meurt de chagrin. Un couple formé d’un loup et d’un membre du village gagne s’il reste seul en vie.' },
   salvateur: { nom: 'Salvateur', camp: 'Village', pouvoir: 'Protège une personne de l’attaque des loups, toi compris. D’une nuit à la suivante, choisis une personne différente ou passe ton tour.' },
   ancien: { nom: 'Ancien', camp: 'Village', pouvoir: 'Tu survis à la première attaque des loups qui te touche. Le poison et le vote peuvent t’éliminer dès la première fois.' },
-  corbeau: { nom: 'Corbeau', camp: 'Village', pouvoir: 'Chaque nuit, désigne une autre personne. Elle reçoit deux voix contre elle au premier tour du prochain vote d’élimination si elle survit à la nuit.' },
+  corbeau: { nom: 'Corbeau', camp: 'Village', pouvoir: 'Chaque nuit, tu peux désigner une autre personne. Elle reçoit deux voix contre elle au premier tour du prochain vote d’élimination si elle survit à la nuit.' },
 };
 const rolesClassiques = ['voyante', 'sorciere', 'chasseur'];
 const rolesOptionnels = [...rolesClassiques, 'cupidon', 'salvateur', 'ancien', 'corbeau'];
@@ -30,7 +30,7 @@ const phases = {
   cupidon: ['Nuit', 'Forme un couple', roles.cupidon.pouvoir, 'heart'],
   voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
   salvateur: ['Nuit', 'Choisis qui protéger', roles.salvateur.pouvoir, 'shield'],
-  loups: ['Nuit', 'Choisissez votre cible', 'Vote pour la personne que ta meute attaquera cette nuit.', 'moon'],
+  loups: ['Nuit', 'Choisissez votre cible', 'Mettez-vous d’accord : tu vois le choix des autres loups et tu peux changer le tien.', 'moon'],
   sorciere: ['Nuit', 'Choisis tes potions', 'Tu peux garder tes potions pour une autre nuit.', 'sparkle'],
   corbeau: ['Nuit', 'Choisis qui marquer', roles.corbeau.pouvoir, 'moon'],
   debat: ['Jour', 'Le village débat', 'Discutez à voix haute. L’hôte ouvre le vote quand tout le monde est prêt.', 'chat'],
@@ -579,17 +579,22 @@ function etapes(p) {
 }
 
 function choixJoueurs(p) {
-  if (choixCible.numero !== p.numero) choixCible = { numero: p.numero, valeur: null };
+  if (choixCible.numero !== p.numero) choixCible = { numero: p.numero, valeur: p.action.choixActuel ?? null };
   const textes = { salvateur: 'Protéger', corbeau: 'Marquer', loups: 'Confirmer la cible', election: 'Envoyer mon vote',
     vote: 'Envoyer mon vote', departage: 'Confirmer le départage', chasseur: 'Confirmer le tir', succession: 'Désigner le maire' };
-  return `<form data-form="cible" data-numero="${p.numero}">
+  const meute = p.phase === 'loups' && p.action.meute?.length > 1
+    ? `<ul class="soft">${p.action.meute.map(loup => `<li>${echapper(loup.nom)}${loup.toi ? ' (toi)' : ''} · ${loup.cible ? echapper(loup.cible) : 'pas encore de choix'}</li>`).join('')}</ul>
+      <p class="soft">La victime est choisie quand toute la meute vise la même personne. Sans accord à la fin du délai, le sort départage.</p>`
+    : '';
+  return `${meute}<form data-form="cible" data-numero="${p.numero}">
     <fieldset class="liste-cibles"><legend class="sr">Joueurs disponibles</legend>${p.action.cibles.map(id => `
       <label class="cible"><input type="radio" required name="cible" value="${id}" ${choixCible.valeur === id ? 'checked' : ''}>
       <span class="avatar">${echapper(initiales(etiquette(id)))}</span><strong>${echapper(etiquette(id))}${id === etat.joueur ? ' <small>· Toi</small>' : ''}</strong>
       ${p.maire === id ? medaille : ''}
       ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}</fieldset>
-    <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${textes[p.phase]}</button>
-    ${p.phase === 'salvateur' ? action('Passer cette nuit', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
+    <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : textes[p.phase]}</button>
+    ${p.phase === 'salvateur' ? action('Passer cette nuit', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}
+    ${p.phase === 'corbeau' ? action('Ne marquer personne', 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
 }
 
 function choixCupidon(p) {
@@ -778,7 +783,7 @@ function vuePhase(p) {
     ${etat.anime ? `<div class="actions commandes-phase">
       ${action(p.pause ? 'Reprendre' : 'Mettre en pause', p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}
       ${p.peutProlonger ? action('+30 s de débat', 'plus', 'prolonger', 'gh') : ''}
-      ${p.peutPasser ? action('Passer les absents', 'chev', 'passer', 'gh') + aide('absents', 'Actions des absents', 'Après 15 secondes, tu peux passer les actions des personnes hors ligne. Leurs votes manquants comptent comme des abstentions.') : ''}
+      ${p.peutPasser ? action('Passer les absents', 'chev', 'passer', 'gh') + aide('absents', 'Actions des absents', 'Après 15 secondes, tu peux passer les actions des personnes hors ligne. Après 45 secondes, tu peux aussi passer celles des personnes en ligne qui tardent. Les votes manquants comptent comme des abstentions.') : ''}
     </div>` : ''}</section>`;
 }
 

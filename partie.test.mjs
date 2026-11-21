@@ -168,20 +168,20 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   await annonces();
   assert.deepEqual(new Set((await etat(chasseur)).partie.action.cibles), new Set([chasseur.joueur, villageois.joueur]));
   await agir(chasseur, chasseur.joueur, 'departage');
+  await agir(chasseur, sorciere.joueur, 'chasseur');
   await agir(chasseur, villageois.joueur, 'succession');
   await annonces();
   const resultat = (await etat(hote)).partie;
   assert.equal(resultat.phase, 'attenteNuit');
   assert.equal(resultat.revelationVote.role, 'chasseur');
-  assert.ok(!resultat.annonces.some(a => a.fichier === 'chasseur'));
+  assert.ok(resultat.annonces.some(a => a.fichier === 'tir-chasseur'));
+  assert.ok(!resultat.vivants.includes(sorciere.joueur));
   await agir(hote, null, 'attenteNuit');
   await agir(voyante, loups.joueur, 'voyante');
   await agir(voyante, 'confirmer', 'voyante');
-  await agir(loups, sorciere.joueur, 'loups');
-  await agir(sorciere, { soin: false, poison: null }, 'sorciere');
-  await agir(chasseur, loups.joueur, 'chasseur');
+  await agir(loups, voyante.joueur, 'loups');
   await annonces();
-  assert.equal((await etat(hote)).partie.gagnant, 'village');
+  assert.equal((await etat(hote)).partie.gagnant, 'loups');
   assert.equal((await etat(villageois)).partie.maire, villageois.joueur);
   assert.equal(Object.keys((await etat(hote)).partie.bilan).length, 5);
   await post(room + 'retour', {}, hote.token);
@@ -913,4 +913,79 @@ test('la fin de l’annonce démarre le chrono partagé et le délai de secours 
   assert.equal(partie.actualiserTemps(ouvertureVote + 89_999), false);
   assert.equal(partie.actualiserTemps(ouvertureVote + 90_000), true);
   assert.equal(partie.vue('Alice').temps.echeance, ouvertureVote + 135_000);
+});
+
+test('le Chasseur éliminé au vote tire tout de suite, avant le test de victoire', () => {
+  const parite = partieAvecRoles({
+    A: 'villageois', H: 'chasseur', W1: 'loups', W2: 'loups', X: 'villageois', Z: 'villageois',
+  }, { discret: true });
+  jouer(parite, 'W1', 'Z');
+  jouer(parite, 'W2', 'Z');
+  jouer(parite, 'A');
+  for (const id of [...parite.vivants]) jouer(parite, id, 'H');
+  assert.equal(parite.vue('H').phase, 'chasseur');
+  assert.equal(parite.gagnant, undefined);
+  jouer(parite, 'H', 'W1');
+  assert.equal(parite.vue('A').phase, 'attenteNuit');
+  assert.equal(parite.gagnant, undefined);
+
+  const amoureux = partieAvecRoles({
+    C: 'cupidon', H: 'chasseur', W: 'loups', X: 'villageois', Y: 'villageois',
+  }, { discret: true });
+  jouer(amoureux, 'C', ['H', 'W']);
+  jouer(amoureux, 'W', 'Y');
+  jouer(amoureux, 'C');
+  for (const id of [...amoureux.vivants]) jouer(amoureux, id, 'H');
+  assert.equal(amoureux.gagnant, 'village');
+  assert.deepEqual([...amoureux.vivants].sort(), ['C', 'X']);
+});
+
+test('la révélation de la Voyante expire et l’hôte peut forcer une personne en ligne', () => {
+  const partie = partieAvecRoles({
+    A: 'villageois', V: 'voyante', W: 'loups', X: 'villageois', Y: 'villageois',
+  }, { discret: true, roleSecondes: 60 });
+  jouer(partie, 'V', 'W');
+  assert.equal(partie.vue('V').action.revelationAttendue, true);
+  assert.ok(partie.tour.echeance);
+  partie.actualiserTemps(partie.tour.echeance);
+  assert.equal(partie.tour.type, 'loups');
+  assert.deepEqual(partie.absents(() => true, partie.tour.debut + 20_000), []);
+  assert.deepEqual(partie.absents(() => true, partie.tour.debut + 46_000), ['W']);
+  partie.passer(partie.absents(() => true, partie.tour.debut + 46_000));
+  assert.equal(partie.tour.type, 'debat');
+});
+
+test('les loups voient les choix de la meute et attendent l’unanimité', () => {
+  const partie = partieAvecRoles({
+    A: 'villageois', W1: 'loups', W2: 'loups', X: 'villageois', Y: 'villageois', Z: 'villageois', V: 'villageois',
+  }, { discret: true, roleSecondes: 60 });
+  jouer(partie, 'W1', 'X');
+  assert.deepEqual(partie.vue('W2').action.meute.find(loup => loup.nom === 'W1'), { nom: 'W1', cible: 'X', toi: false });
+  jouer(partie, 'W2', 'Y');
+  assert.equal(partie.tour.type, 'loups');
+  assert.equal(partie.vue('W1').action.choixActuel, 'X');
+  jouer(partie, 'W1', 'Y');
+  assert.equal(partie.tour.type, 'debat');
+  assert.ok(!partie.vivants.has('Y'));
+
+  jouer(partie, 'A');
+  for (const id of [...partie.vivants]) jouer(partie, id, 'Z');
+  jouer(partie, 'A');
+  jouer(partie, 'W1', 'X');
+  jouer(partie, 'W2', 'V');
+  assert.equal(partie.tour.type, 'loups');
+  partie.actualiserTemps(partie.tour.echeance);
+  assert.notEqual(partie.tour.type, 'loups');
+  assert.equal([...partie.vivants].filter(id => ['X', 'V'].includes(id)).length, 1);
+});
+
+test('le Corbeau peut ne marquer personne', () => {
+  const partie = partieAvecRoles({
+    A: 'villageois', K: 'corbeau', W: 'loups', X: 'villageois', Y: 'villageois',
+  });
+  jouer(partie, 'W', 'X');
+  jouer(partie, 'K', null);
+  assert.equal(partie.tour.type, 'debat');
+  assert.equal(partie.marqueCorbeau, null);
+  assert.ok(!partie.annonces.some(a => ['cri-corbeau', 'marque-corbeau'].includes(a.fichier)));
 });

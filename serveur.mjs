@@ -142,6 +142,10 @@ function enLigne(salon, id, maintenant = Date.now()) {
 function choixDuBot(salon, bot, type, cibles) {
   if (type === 'voyante' && salon.partie.tour.revelationAttendue) return 'confirmer';
   if (type === 'sorciere') return { soin: false, poison: null };
+  if (type === 'loups') {
+    const choixHumain = [...salon.partie.tour.reponses].find(([id, cible]) => !estBot(salon, id) && cible != null)?.[1];
+    if (choixHumain) return choixHumain;
+  }
   if (type === 'cupidon') return [...cibles.filter(id => estBot(salon, id)),
     ...cibles.filter(id => !estBot(salon, id))].slice(0, 2);
   return cibles.find(id => id !== bot && estBot(salon, id))
@@ -168,7 +172,10 @@ function actualiserPartie(salon, maintenant = Date.now()) {
     for (let i = 0; i < 64 && !partie.gagnant; i++) {
       if (partie.tour.preparation) break;
       const { acteurs, cibles, type, numero, reponses } = partie.tour;
-      const bot = acteurs.find(id => estBot(salon, id) && !reponses.has(id));
+      const choixHumain = type === 'loups'
+        ? [...reponses].find(([id, cible]) => !estBot(salon, id) && cible != null)?.[1] : undefined;
+      const bot = acteurs.find(id => estBot(salon, id) &&
+        (!reponses.has(id) || (choixHumain !== undefined && reponses.get(id) !== choixHumain)));
       if (!bot) break;
       partie.agir(bot, numero, choixDuBot(salon, bot, type, cibles));
       change = true;
