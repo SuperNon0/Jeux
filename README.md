@@ -118,12 +118,14 @@ Chaque loup voit le choix des autres et peut changer le sien. La victime est fix
 
 ### Rôles optionnels
 
-Active ces rôles dans **Personnaliser les règles** à la création du salon. La composition **Village étendu** les réunit tous pour 12 joueurs.
+Active ces rôles dans **Personnaliser les règles** à la création du salon. La composition **Village étendu** les réunit tous pour 14 joueurs.
 
 | Rôle | Pouvoir |
 | --- | --- |
 | Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre le nom de son partenaire sur son téléphone. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
-| Salvateur | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. |
+| Gardien | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. Son identifiant technique reste `salvateur`. |
+| Enfant sauvage | Choisit un modèle la première nuit. Si ce modèle meurt, il devient Loup-Garou en secret et rejoint la meute dès la nuit suivante. |
+| Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Absent, il survit à une attaque des loups. Si les loups dévorent son hôte, il meurt avec lui. |
 | Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
 | Corbeau | Peut marquer un autre joueur chaque nuit, ou ne marquer personne. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 
@@ -169,7 +171,7 @@ En narration classique, un rôle de nuit mort ou sans pouvoir (Sorcière sans po
 | `fin-cupidon.mp3` | Cupidon se rendort. |
 | `fin-debat.mp3` | Le débat est terminé. Préparez-vous à voter. |
 | `fin-loups.mp3` | Les Loups-Garous se rendorment. |
-| `fin-salvateur.mp3` | Le Salvateur se rendort. |
+| `fin-salvateur.mp3` | Le Gardien se rendort. |
 | `fin-sorciere.mp3` | La Sorcière se rendort. |
 | `fin-voyante.mp3` | La Voyante se rendort. |
 | `le-village-se-reveille.mp3` | Le village se réveille. |
@@ -183,7 +185,7 @@ En narration classique, un rôle de nuit mort ou sans pouvoir (Sorcière sans po
 | `nuit-avec-victimes.mp3` | La nuit a fait des victimes. Consultez le résultat sur votre téléphone. |
 | `nuit-sans-victime.mp3` | Cette nuit, personne n’a été éliminé. |
 | `resultat-vote.mp3` | Le vote est terminé. Consultez le résultat sur votre téléphone. |
-| `salvateur.mp3` | Le Salvateur se réveille. Choisis la personne que tu veux protéger cette nuit. |
+| `salvateur.mp3` | Le Gardien se réveille. Choisis la personne que tu veux protéger cette nuit. |
 | `second-tour.mp3` | Le vote reprend. Choisissez parmi les candidats arrivés à égalité. |
 | `sorciere.mp3` | La Sorcière se réveille. Tu peux utiliser tes potions ou les garder pour une autre nuit. |
 | `succession-maire.mp3` | Le maire a été éliminé. Il doit désigner son successeur. |

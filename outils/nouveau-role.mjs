@@ -25,7 +25,7 @@ export function promptImage(nom, description) {
 export function modeleRole({ id, nom, camp, nuit, rang, article }) {
   const sujet = article === 'L’' ? `L’${nom}` : `${article} ${nom}`;
   const lignesNuit = nuit ? `
-  // Phase de nuit : rang = place dans la nuit (Cupidon 10, Voyante 20, Salvateur 30, Loups 40, Sorcière 50, Corbeau 60).
+  // Phase de nuit : rang = place dans la nuit (Cupidon 10, Voyante 20, Gardien 30, Loups 40, Sorcière 50, Corbeau 60).
   nuit: {
     rang: ${rang},
     titre: 'À compléter : titre de l’écran',

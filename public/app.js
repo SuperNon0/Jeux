@@ -692,10 +692,17 @@ function carte(p) {
 
   function detailCarte(p) {
     if (!revelee) return '<p class="soft">Touche la carte pour révéler ton rôle.</p>';
-    return `<h3 class="ttl">${role.nom}</h3><p class="soft">${role.pouvoir}</p>
+    return `<h3 class="ttl">${role.nom}</h3><p class="soft">${role.pouvoir}</p>${explicationRole(role)}
       ${p.allies.length ? `<p class="soft">Ta meute · ${p.allies.map(echapper).join(', ')}</p>` : ''}
       ${p.infoRole ? `<p class="soft">${echapper(p.infoRole)}</p>` : ''}`;
   }
+}
+
+// Règle détaillée d’un rôle (champ « explication » de son fichier), affichée sur sa fiche et sous la carte.
+function explicationRole(role) {
+  if (!role.explication?.length) return '';
+  return `<details class="explication-role"><summary>Comment ça marche</summary>
+    <ol>${role.explication.map(etape => `<li>${etape}</li>`).join('')}</ol></details>`;
 }
 
 function carteDuVote(vote) {
@@ -1062,7 +1069,7 @@ const compositions = [
   ['Petite table · 5 joueurs', 5, 1, ['voyante']],
   ['Table classique · 8 joueurs', 8, 2, rolesClassiques],
   ['Grande table · 12 joueurs', 12, 3, rolesClassiques],
-  ['Village étendu · 12 joueurs', 12, 3, rolesOptionnels],
+  ['Village étendu · 14 joueurs', 14, 3, rolesOptionnels],
 ];
 
 function optionsComposition() {
@@ -1289,7 +1296,8 @@ function contenuFeuille(type, contexte) {
     }
     case 'role': {
       const role = roles[contexte];
-      return [role.nom, `<div class="fiche-role">${art(contexte)}<div><p class="lbl-mono">Camp ${role.camp}</p><p>${role.pouvoir}</p></div></div>`];
+      return [role.nom, `<div class="fiche-role">${art(contexte)}<div><p class="lbl-mono">Camp ${role.camp}</p><p>${role.pouvoir}</p></div></div>
+        ${explicationRole(role)}`];
     }
     case 'regles': return ['Comment jouer', `<div class="faq">
       <details open><summary>Comment rejoindre les autres ?</summary><p>Scanne le QR code de l’hôte ou saisis les six caractères du salon, puis choisis ton pseudo. Garde le même navigateur pour retrouver ta place.</p></details>

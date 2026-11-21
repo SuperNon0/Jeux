@@ -219,6 +219,7 @@ export class Partie {
     this.protection = null;
     this.cibleCorbeau = null;
     this.marqueCorbeau = null;
+    this.victimesNuit = [];
     this.annoncer('le-village-sendort');
     this.prochainRole();
   }
@@ -252,10 +253,14 @@ export class Partie {
     if (this.ancienMorduCetteNuit) {
       this.annoncer('ancien-survit', 'L’Ancien a survécu à la morsure des loups.');
     }
-    const victimes = [...new Set([this.victimeLoups, this.poison].filter(Boolean))];
+    const causes = new Map();
+    for (const [id, cause] of [[this.victimeLoups, 'loups'], [this.poison, 'poison'], ...(this.victimesNuit ?? [])]) {
+      if (id && !causes.has(id)) causes.set(id, cause);
+    }
+    const victimes = [...causes.keys()];
     this.annoncer(victimes.length ? 'nuit-avec-victimes' : 'nuit-sans-victime',
       victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'La nuit n’a fait aucune victime.');
-    this.eliminer(victimes.map(id => [id, id === this.victimeLoups ? 'loups' : 'poison']), 'debat');
+    this.eliminer([...causes], 'debat');
   }
 
   ciblesDeNuit(role, acteurs) {
@@ -265,6 +270,12 @@ export class Partie {
       if (['voyante', 'sorciere', 'cupidon'].includes(role)) return true;
       return !acteurs.includes(id);
     });
+  }
+
+  // Un rôle ajouté par fichier peut faire mourir quelqu’un en plus pendant la nuit (dans auReveil).
+  ajouterVictimeNuit(id, cause) {
+    this.victimesNuit ??= [];
+    if (this.vivants.has(id) && !this.victimesNuit.some(([victime]) => victime === id)) this.victimesNuit.push([id, cause]);
   }
 
   // Mémoire d’un rôle ajouté par fichier, sauvegardée avec la partie.

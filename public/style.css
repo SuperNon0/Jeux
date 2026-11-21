@@ -253,6 +253,9 @@ form, .options, .champ-jeu, .faq { display: grid; gap: 10px; }
 .fiche-role { display: grid; grid-template-columns: 98px 1fr; align-items: start; gap: 14px; }
 .fiche-role .art { border-radius: 10px; }
 .fiche-role .lbl-mono { margin-bottom: 8px; }
+.explication-role { margin-top: 14px; }
+.explication-role summary { cursor: pointer; font-weight: 600; }
+.explication-role ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 8px; }
 .selection-accents { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 8px; }
 .past[aria-pressed=true] i { border-color: var(--text); }
 .notification {

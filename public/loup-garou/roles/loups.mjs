@@ -8,6 +8,11 @@ export default {
   pouvoir: 'Choisis une cible chaque nuit avec les membres de ta meute.',
   art: { image: 'cartes-et-ambiances.png', taille: '300% auto', position: 'left top' },
   nuit: { rang: 40, apres: ['salvateur'], titre: 'Choisissez votre cible', consigne: 'Mettez-vous d’accord : tu vois le choix des autres loups et tu peux changer le tien.', icone: 'moon', bouton: 'Confirmer la cible' },
+  // Enfant sauvage devenu loup : il est prévenu sous sa carte.
+  info(partie, joueur) {
+    return partie.etatsRoles?.['enfant-sauvage']?.transforme === joueur
+      ? 'Ton modèle est mort : tu as rejoint la meute. Tu gagnes désormais avec les Loups-Garous.' : '';
+  },
   phrases: {
     appel: 'Les Loups-Garous se réveillent. Choisissez votre cible.',
     fin: 'Les Loups-Garous se rendorment.',
