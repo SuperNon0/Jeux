@@ -23,6 +23,7 @@ const rolesOptionnels = ['voyante', 'sorciere', 'chasseur', 'cupidon', 'salvateu
 const nouveauxRoles = rolesOptionnels.slice(3);
 const phases = {
   distribution: ['Distribution', 'Découvre ton rôle', 'Retourne ta carte à l’abri des regards, puis indique que tu es prêt.', 'layers'],
+  lancement: ['Distribution', 'Tout le monde est prêt', 'L’hôte lance la partie quand la table est prête.', 'play'],
   nuit: ['Nuit', 'Le village dort', 'Les personnes appelées agissent sur leur téléphone. La suite s’affichera ici.', 'moon'],
   cupidon: ['Nuit', 'Forme un couple', roles.cupidon.pouvoir, 'heart'],
   voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
@@ -34,13 +35,14 @@ const phases = {
   election: ['Élection', 'Élisez le maire', 'Le maire a une voix double lors des votes d’élimination et départage les égalités.', 'star'],
   egaliteElection: ['Élection', 'Égalité à l’élection', 'L’hôte peut relancer le vote ou tirer au sort parmi les personnes à égalité.', 'dice'],
   vote: ['Vote', 'Choisissez qui éliminer', 'Chaque personne encore en jeu vote en privé.', 'list'],
+  attenteNuit: ['Résultat du vote', 'Le vote est terminé', 'L’hôte confirme le passage à la nuit après le résultat.', 'check'],
   egaliteVote: ['Vote', 'Une égalité persiste', 'L’hôte peut relancer le vote ou tirer au sort parmi les personnes à égalité.', 'dice'],
   departage: ['Vote', 'Le maire départage', 'Le maire choisit parmi les personnes arrivées en tête.', 'star'],
   chasseur: ['Dernier pouvoir', 'Le dernier tir', 'Le Chasseur choisit une personne à emporter.', 'shield'],
   succession: ['Mairie', 'Transmets le titre', 'Le maire éliminé désigne son successeur parmi les survivants.', 'star'],
 };
 const statuts = { ouvert: ['Salon ouvert', 'users'], 'en-cours': ['En cours', 'play'], pause: ['En pause', 'clock'],
-  terminee: ['Terminée', 'check'], expire: ['Expiré', 'alert'], aRecuperer: ['Place à reprendre', 'rotate'] };
+  terminee: ['Terminée', 'check'], cloturee: ['Clôturé', 'lock'], expire: ['Salon indisponible', 'alert'], aRecuperer: ['Place à reprendre', 'rotate'] };
 const accents = { lavande: 'Lavande', menthe: 'Menthe', or: 'Or', ambre: 'Ambre', corail: 'Corail' };
 const codeValide = /^[A-HJ-NP-Z2-9]{6}$/;
 const cleSession = code => `jeux-session-${code}`;
@@ -50,6 +52,7 @@ const hebergement = await fetch('/api/configuration', { signal: AbortSignal.time
   .then(reponse => reponse.ok ? reponse.json() : {}).catch(() => ({}));
 const enInvite = hebergement.mode === 'invite';
 const enHote = hebergement.mode === 'hote';
+let compositionsPartagees = hebergement.compositions ?? [];
 const cleReprise = code => `jeux-reprise-${code}`;
 const lecteur = new Audio();
 // Deux échantillons silencieux amorcent le lecteur pendant le geste de l’hôte.
@@ -82,6 +85,7 @@ let donneesAdmin, chargementAdmin = false, erreurAdmin = '';
 let reprise = code && !token ? sauvegarde.lire(cleReprise(code)) : null;
 let etat, erreur, minuterieAvis, minuterieMaire, envoi = false, synchronise = false, revision = 0;
 let revelee = false;
+let tiragePartie, minuterieTirage;
 let decalageHorloge = 0;
 let configurationSon = hebergement.son ?? { volume: 100, associations: {} };
 let contexteAudio;
@@ -110,6 +114,7 @@ const etiquette = id => etat.joueurs.find(j => j.id === id)?.nom ?? '';
 const initiales = nom => [...nom.trim()].slice(0, 2).join('').toLocaleUpperCase('fr');
 const pastille = (texte, nom, classe = '') => `<span class="statut ${classe}">${icone(nom, 16)}${texte}</span>`;
 const dateRelative = new Intl.RelativeTimeFormat('fr', { numeric: 'auto' });
+const interfaceJoueur = () => Boolean(etat?.partie && !etat.anime && !enHote);
 
 function aide(id, sujet, texte) {
   return `<span class="aide-info"><button type="button" class="aide-bouton" popovertarget="info-${id}"
@@ -260,12 +265,23 @@ function actualiser(nouveau) {
   const partie = nouveau.partie;
   if (precedente?.id !== partie?.id) {
     revelee = false;
+    clearTimeout(minuterieTirage);
+    tiragePartie = null;
     choixCible = { numero: undefined, valeur: null };
     dernierSon = 0;
     if (precedente && !precedente.gagnant) stopperNarration();
-    if (partie) zone = 'partie';
+    if (partie) {
+      const distribution = partie.phase === 'distribution' && !partie.aRepondu;
+      zone = distribution ? 'carte' : 'partie';
+      if (distribution && !mouvementReduit.matches) {
+        tiragePartie = partie.id;
+        minuterieTirage = setTimeout(() => { tiragePartie = null; afficher(); }, 1050);
+      }
+    }
     if (!partie && ['carte', 'journal'].includes(zone)) zone = 'partie';
   }
+  if (precedente?.phase === 'distribution' && zone === 'carte' &&
+      (partie?.phase === 'lancement' || (precedente.action && partie?.aRepondu))) zone = 'partie';
   const annonces = partie?.annonces ?? [];
   const recentes = annonces.filter(a => a.id > dernierSon);
   const revelation = precedente && precedente.id === partie?.id && partie.historique.length > precedente.historique.length
@@ -325,12 +341,16 @@ async function synchroniser() {
       memoriser({ code, statut: incident.status === 404 ? 'expire' : 'aRecuperer' });
       token = null;
       etat = null;
-      zone = 'accueil';
+      if (incident.status === 404) {
+        code = '';
+        history.replaceState(history.state, '', '/');
+      }
+      if (zone !== 'admin') zone = 'accueil';
       son = false;
       stopperNarration();
       afficher();
     }
-    if (reprise && [400, 404].includes(incident.status)) {
+    if (reprise && [400, 404, 410].includes(incident.status)) {
       reprise = null;
       sauvegarde.oublier(cleReprise(code));
       fermerFeuille();
@@ -360,11 +380,13 @@ async function actualiserListe() {
 }
 
 function navigationActuelle() {
+  if (interfaceJoueur()) return ['partie', 'carte', 'plus'];
   const liens = etat ? etat.partie ? ['partie', 'carte', 'journal'] : ['partie', 'salons'] : ['accueil', 'salons'];
   return [...liens, ...(enHote ? ['admin'] : []), 'plus'];
 }
 
 function rendreNavigation() {
+  document.body.classList.toggle('joueur-simple', interfaceJoueur());
   const liens = navigationActuelle();
   const doitAgir = etat?.partie?.action && zone !== 'partie';
   const titre = (cle, mobile) => cle === 'partie' && !etat?.partie ? 'Salon' : mobile && cle === 'admin' ? 'Admin' : zones[cle][0];
@@ -405,9 +427,10 @@ function accueil() {
   const rejoindreSalon = enHote
     ? `<a class="btn sur-image" href="${echapper(hebergement.origineInvites)}">${icone('arrow', 18)}Accès invité</a>`
     : action('Rejoindre', 'arrow', 'rejoindre', enInvite ? 'pri' : 'sur-image');
-  const demo = action('Essayer la démo', 'play', 'demo', 'sur-image');
+  const demo = enHote ? action('Essayer la démo', 'play', 'demo', 'sur-image') : '';
   const lien = code ? `Invitation au salon <strong>${code}</strong>.` : 'Une carte et des votes privés sur chaque téléphone.';
-  const actifs = Object.values(connus).filter(s => s && s.statut !== 'expire').sort((a, b) => (b.activite ?? 0) - (a.activite ?? 0));
+  const actifs = Object.values(connus).filter(s => s && !['expire', 'cloturee'].includes(s.statut))
+    .sort((a, b) => (b.activite ?? 0) - (a.activite ?? 0));
   return `${afficheScene('scene-accueil', '<h1 class="ttl">Loup-Garou</h1>', lien,
       code ? action('Rejoindre le salon', 'arrow', 'rejoindre', 'pri') + action('Reprendre ma place', 'rotate', 'reprise', 'sur-image')
         : creerSalon + rejoindreSalon + demo,
@@ -484,14 +507,20 @@ function boutonSon() {
 }
 
 function salon() {
+  if (etat.resume.statut === 'cloturee') {
+    return `${entetePage('Salon clôturé', `Salon <span class="mono">${code}</span>`)}
+      <section class="panneau pile"><p>L’administration a terminé cette partie.</p>
+        <div class="actions">${action('Mes salons', 'users', 'liste', 'pri')}${action('Quitter l’écran', 'logout', 'sortir', 'gh')}</div>
+      </section>`;
+  }
   const complet = etat.joueurs.length === etat.total && etat.joueurs.every(j => j.enLigne);
   return `${entetePage('Salon', etat.hote ? 'Invite les joueurs, puis lance la partie.' : 'La partie démarre quand l’hôte est prêt.',
       action('Quitter l’écran', 'logout', 'sortir', 'gh'))}
     <div class="grille-partie grille-salon">
       <section class="panneau panneau-invitation"><h2 class="ttl">Inviter des amis ${aide('qr', 'Invitation', 'Les joueurs scannent le QR ou ouvrent le lien sur leur téléphone. Une personne qui a perdu son accès peut demander à reprendre son pseudo.')}</h2>${invitation()}</section>
       <section class="panneau commandes-salon panneau-lancer">
-         <div><h2 class="ttl">Lancer la partie</h2><p class="soft">${!complet ? 'Toutes les places doivent être occupées et en ligne.' : etat.hote ? 'Tout le monde est là.' : 'En attente de l’hôte.'}</p></div>
-         ${etat.hote ? `<div class="actions">${boutonSon()}${action('Démarrer', 'play', 'lancer', 'pri', complet ? '' : 'disabled')}
+         <div><h2 class="ttl">Distribution des cartes</h2><p class="soft">${!complet ? 'Toutes les places doivent être occupées et en ligne.' : etat.hote ? 'Tout le monde est là.' : 'En attente de l’hôte.'}</p></div>
+         ${etat.hote ? `<div class="actions">${boutonSon()}${action('Tirer les cartes', 'layers', 'lancer', 'pri', complet ? '' : 'disabled')}
            ${etat.joueurs.length > 1 ? action('Co-hôte', 'users', 'cohote', 'gh') : ''}</div>` : ''}
       </section>
       ${panneauJoueurs()}
@@ -501,10 +530,10 @@ function salon() {
     </div>`;
 }
 
-const jourPhases = new Set(['debat', 'election', 'egaliteElection', 'vote', 'departage', 'egaliteVote', 'succession', 'chasseur']);
+const jourPhases = new Set(['debat', 'election', 'egaliteElection', 'vote', 'attenteNuit', 'departage', 'egaliteVote', 'succession', 'chasseur']);
 
 function etapes(p) {
-  const phase = p.phase === 'distribution' ? 'carte' : p.phase === 'fin' ? 'fin' : jourPhases.has(p.phase) ? 'jour' : 'nuit';
+  const phase = ['distribution', 'lancement'].includes(p.phase) ? 'carte' : p.phase === 'fin' ? 'fin' : jourPhases.has(p.phase) ? 'jour' : 'nuit';
   return `<ol class="etapes" aria-label="Phase de jeu">${[
     ['carte', 'layers', 'Cartes'], ['nuit', 'moon', 'Nuit'], ['jour', 'sun', 'Jour'], ['fin', 'star', 'Résultat'],
   ].map(([id, ic, titre]) => `<li ${id === phase ? 'aria-current="step"' : ''}>${icone(ic, 18)}${titre}</li>`).join('')}</ol>`;
@@ -565,16 +594,19 @@ function commandes(p) {
   if (!p.action) {
     const sorti = !p.vivants.includes(etat.joueur);
     const message = p.aRepondu ? 'Ton choix est enregistré.' : sorti ? 'Tu suis la partie en spectateur.'
-      : p.phase === 'nuit' ? 'Ton téléphone t’indiquera si tu dois agir.' : 'En attente des autres joueurs.';
+      : p.phase === 'nuit' ? 'Ton téléphone t’indiquera si tu dois agir.'
+      : p.phase === 'attenteNuit' ? 'En attente de la confirmation de l’hôte.' : 'En attente des autres joueurs.';
     return `<p class="notice attente">${icone(p.aRepondu ? 'check' : sorti ? 'eye' : 'hourglass', 18)}${message}</p>`;
   }
   const agir = (texte, ic, classe = 'pri', choix = '') => action(texte, ic, 'agir', classe, `data-envoi data-numero="${p.numero}" ${choix ? `data-choix="${choix}"` : ''}`);
   if (p.phase === 'distribution') {
-    return `<div class="actions">${action('Voir ma carte', 'eye', 'ouvrir-carte')}${agir('Je suis prêt', 'check')}</div>`;
+    return action('Voir ma carte', 'eye', 'ouvrir-carte', 'pri');
   }
+  if (p.phase === 'lancement') return agir('Lancer la partie', 'play');
   if (p.phase === 'voyante') return ciblesVoyante(p);
   if (p.phase === 'cupidon') return choixCupidon(p);
   if (p.phase === 'debat') return agir('Ouvrir le vote', 'arrow');
+  if (p.phase === 'attenteNuit') return agir('Confirmer et lancer la nuit', 'moon');
   if (['egaliteElection', 'egaliteVote'].includes(p.phase)) {
     return `<p class="soft">${p.action.cibles.map(id => echapper(etiquette(id))).join(' · ')}</p>
       <div class="actions">${agir('Relancer le vote', 'refresh', 'pri', 'revoter')}${agir('Tirer au sort', 'dice', '', 'tirer')}</div>`;
@@ -604,7 +636,7 @@ function journal(p) {
 
 function carte(p) {
   const role = roles[p.role];
-  return `<section class="panneau carte-zone">
+  return `<section class="panneau carte-zone ${p.phase === 'distribution' ? 'carte-distribuee' : ''}">
     <div class="titre-bloc"><h2 class="ttl">Ta carte</h2>${pastille('Privée', 'lock')}</div>
     <button type="button" class="carte ${revelee ? 'revelee' : ''}" data-action="retourner" aria-pressed="${revelee}"
       aria-label="${revelee ? 'Cacher ma carte' : 'Retourner ma carte'}">
@@ -634,7 +666,8 @@ function vuePhase(p) {
   const [label, titre, texte, ic] = phases[p.phase];
   const progression = p.progression;
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
-    p.phase === 'vote' ? ['maire-elu', 'nouveau-maire'].includes(a.fichier) : false));
+    p.phase === 'vote' ? ['maire-elu', 'nouveau-maire'].includes(a.fichier) :
+    p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination'].includes(a.fichier) : false));
   const animateurPresent = etat.joueurs.some(j => j.enLigne && [etat.hoteId, etat.cohoteId].includes(j.id));
   return `<section class="panneau phase">
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
@@ -660,6 +693,7 @@ function vuePhase(p) {
 }
 
 function chronos(p) {
+  if (['distribution', 'lancement'].includes(p.phase)) return '';
   const label = p.phase === 'debat' ? 'Temps de parole' : p.phase === 'election' ? 'Élection' : p.phase === 'vote' ? 'Temps de vote' : '';
   return `<div class="chronos" aria-label="Chronomètres">
     <div class="chrono">${icone('clock', 18)}<span>Partie</span><time class="mono" data-temps-total role="timer">0:00</time></div>
@@ -670,13 +704,29 @@ function chronos(p) {
 
 function partie() {
   const p = etat.partie;
+  if (p.phase === 'distribution' && tiragePartie === p.id && ['partie', 'carte'].includes(zone)) {
+    return `<section class="panneau carte-zone carte-distribuee" aria-labelledby="titre-tirage">
+      <h1 id="titre-tirage" class="ttl">Tirage des cartes</h1>
+      <div class="tirage-cartes" aria-hidden="true">${art('dos')}${art('dos')}${art('dos')}</div>
+    </section>`;
+  }
+  const contenu = zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p);
+  if (zone === 'carte' && p.phase === 'distribution') return contenu;
+  if (interfaceJoueur()) {
+    return `${entetePage(zones[zone][0], p.jour ? `Tour ${p.jour}` : '')}
+      ${chronos(p)}
+      <div class="pile joueur-partie">${contenu}
+      ${zone === 'partie' && p.phase !== 'distribution' ? `<details class="panneau" id="joueurs-repliables" ${p.phase === 'fin' ? 'open' : ''}>
+        <summary>${p.phase === 'fin' ? 'Résultat et rôles' : 'Joueurs'} ${icone('chevd', 16)}</summary>${panneauJoueurs(p)}</details>` : ''}
+      </div>`;
+  }
   return `${entetePage(etat.demo && zone === 'partie' ? 'Démo' : zones[zone][0],
       `${etat.demo ? 'Quatre joueurs simulés' : `Salon <span class="mono">${code}</span>`}${p.jour ? ` · Tour ${p.jour}` : ''}`,
       action('Options du salon', 'dots', 'plus', 'gh'))}
     ${chronos(p)}
     ${etapes(p)}
     <div class="grille-partie"><div class="pile">
-      ${zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p)}
+      ${contenu}
     </div><div class="pile">${panneauJoueurs(p)}
       ${etat.hote && (p.phase !== 'distribution' || zone !== 'partie') ? `<section class="panneau commandes-salon"><div><h2 class="ttl">Narration ${aide('narration', 'Narration', 'Active le son sur un téléphone pour que les annonces soient diffusées à toute la table.')}</h2></div>${boutonSon()}</section>` : ''}
     </div></div>`;
@@ -708,6 +758,7 @@ async function chargerAdmin() {
   chargementAdmin = true;
   try {
     donneesAdmin = await requete('/api/admin');
+    compositionsPartagees = donneesAdmin.compositions ?? compositionsPartagees;
     erreurAdmin = '';
   } catch (incident) { erreurAdmin = incident.message; }
   finally {
@@ -745,12 +796,16 @@ function panneauAdmin() {
       .map(([id, texte, nom]) => `<button type="button" class="btn gh" data-action="section-admin" data-section="${id}">${icone(nom, 16)}${texte}</button>`).join('')}
     </nav><div class="grille-partie panneau-admin"><div class="pile">
     <section class="panneau" id="admin-salons" tabindex="-1">
-      <div class="titre-bloc"><h2 class="ttl">Tous les salons ${aide('tous-salons', 'Tous les salons', 'Ce tableau inclut les parties en pause et les démos. Les cartes, les votes et les révélations restent privés.')}</h2>${action('Actualiser', 'refresh', 'actualiser-admin', 'gh')}</div>
+      <div class="titre-bloc"><h2 class="ttl">Tous les salons ${aide('tous-salons', 'Tous les salons', 'Terminer ferme le salon et le garde dans ce tableau. Supprimer le retire définitivement. Les cartes et les votes restent privés.')}</h2>${action('Actualiser', 'refresh', 'actualiser-admin', 'gh')}</div>
       ${salons.length ? `<ul class="liste-admin-salons">${salons.map(salon => {
         const [label, ic] = statuts[salon.statut];
-        return `<li><div><strong class="mono">${salon.code}</strong><small class="muted">${echapper(salon.hote)}
-          · ${salon.joueurs}/${salon.total} places · ${salon.enLigne} en ligne${salon.jour ? ` · Tour ${salon.jour}` : ''}</small></div>
-          ${pastille(label, ic, salon.statut === 'pause' ? 'pause' : '')}</li>`;
+        return `<li><div class="titre-bloc"><div><strong class="mono">${salon.code}</strong><small class="muted">${echapper(salon.hote)}
+          ${salon.demo ? '· Démo ' : ''}· ${salon.joueurs}/${salon.total} places · ${salon.enLigne} en ligne${salon.jour ? ` · Tour ${salon.jour}` : ''}</small></div>
+          ${pastille(label, ic, salon.statut === 'pause' ? 'pause' : '')}</div>
+          <div class="actions">
+            ${salon.statut === 'cloturee' ? '' : action('Terminer', 'lock', 'gerer-salon', 'gh', `data-code="${salon.code}" data-operation="terminer" aria-label="Terminer le salon ${salon.code}"`)}
+            ${action('Supprimer', 'trash', 'gerer-salon', 'gh', `data-code="${salon.code}" data-operation="supprimer" aria-label="Supprimer le salon ${salon.code}"`)}
+          </div></li>`;
       }).join('')}</ul>` : '<p class="soft">Aucun salon enregistré pour le moment.</p>'}
     </section>
     <section class="panneau pile" id="admin-maj" tabindex="-1">
@@ -817,7 +872,9 @@ function afficher() {
   const valeurs = formulaire?.dataset.numero === String(etat?.partie?.numero) ? new FormData(formulaire) : null;
   const focusCible = focus?.name === 'cible' ? focus.value : null;
   const champActif = formulaire?.contains(focus) ? focus.name : '';
+  const joueursOuverts = app.querySelector('#joueurs-repliables')?.open;
   app.innerHTML = html;
+  if (joueursOuverts && app.querySelector('#joueurs-repliables')) app.querySelector('#joueurs-repliables').open = true;
   renduPage = html;
   actualiserCompteur();
   if (valeurs) {
@@ -847,9 +904,10 @@ const formCreation = () => `<form data-form="creer">
     <label><input type="radio" name="mode" value="classique" checked><span><strong>Classique</strong><small>Voyante, potions et dernier tir.</small></span></label>
     <label><input type="radio" name="mode" value="express"><span><strong>Initiation</strong><small>Villageois, Voyante et loups.</small></span></label>
   </fieldset>
+  <div class="ligne-option"><label class="case"><input type="checkbox" name="maire" checked>Élection du maire</label>
+    ${aide('creation-maire', 'Élection du maire', 'Le village élit son maire à la fin du premier débat. Sa voix compte double lors des votes d’élimination et il tranche les égalités.')}</div>
   <details class="avances"><summary>Personnaliser les règles ${icone('chevd', 16)}</summary>
     <div class="options">
-      <label class="case"><input type="checkbox" name="maire" checked>Élection du maire</label>
       <label class="case"><input type="checkbox" name="discret">Appels de nuit discrets</label>
       <div class="options-roles">
         <label class="champ-jeu">Loups-Garous<input type="number" name="loups" min="1" max="2" value="1" required></label>
@@ -869,6 +927,12 @@ const formCreation = () => `<form data-form="creer">
       <label class="champ-jeu">Vote (s)<input name="voteSecondes" type="number" min="0" max="900" value="60" required></label>
     </div>${aide('chronos', 'Chronomètres', 'Entre 15 et 900 secondes, ou 0 pour désactiver. À la fin du vote, les bulletins manquants deviennent des abstentions.')}</details>
   <p class="composition-prevision soft" id="projection"></p>
+  ${enHote ? `<details class="avances"><summary>Compositions partagées ${icone('chevd', 16)}</summary>
+    <div class="options"><input type="hidden" name="compositionId">
+      <label class="champ-jeu">Nom de la composition partagée<input name="nomPartage" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
+      <div class="actions">${action('Enregistrer une composition', 'plus', 'enregistrer-composition', 'gh')}
+        ${action('Mettre à jour la composition', 'check', 'enregistrer-composition', 'gh', 'data-modifier disabled')}</div>
+    </div></details>` : ''}
   <details class="avances"><summary>Mes favoris ${icone('chevd', 16)}</summary>
     <div class="actions"><label class="champ-jeu">Nom de la composition<input name="favori" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
     ${action('Enregistrer', 'star', 'favori', 'gh')}</div></details>
@@ -885,6 +949,8 @@ const compositions = [
 function optionsComposition() {
   return '<option value="">Personnalisée</option>' + compositions.map(([nom], index) =>
     `<option value="modele-${index}">${nom}</option>`).join('') +
+    (compositionsPartagees.length ? `<optgroup label="Compositions partagées">${compositionsPartagees.map(({ nom }, index) =>
+      `<option value="partagee-${index}">${echapper(nom)}</option>`).join('')}</optgroup>` : '') +
     favoris.map(({ nom }, index) => `<option value="favori-${index}">${echapper(nom)}</option>`).join('');
 }
 
@@ -906,6 +972,11 @@ function appliquerComposition(form) {
   const champs = form.elements;
   const selection = champs.preset.value;
   const [source, index] = selection.split('-');
+  if (champs.compositionId) {
+    champs.compositionId.value = '';
+    champs.nomPartage.value = '';
+    form.querySelector('[data-modifier]').disabled = true;
+  }
   if (source === 'modele') {
     const [, total, loups, mode, ajouts = []] = compositions[index];
     champs.total.value = total;
@@ -914,6 +985,22 @@ function appliquerComposition(form) {
     champs.loups.value = loups;
     for (const id of ajouts) champs[id].checked = true;
     champs.preset.value = selection;
+  } else if (source === 'partagee') {
+    const preset = compositionsPartagees[index];
+    if (!preset) return;
+    champs.total.value = preset.total;
+    champs.loups.value = preset.composition.loups;
+    for (const id of rolesOptionnels) champs[id].checked = Boolean(preset.composition[id]);
+    champs.mode.value = champs.sorciere.checked || champs.chasseur.checked ? 'classique' : 'express';
+    champs.maire.checked = preset.maire;
+    champs.discret.checked = preset.discret;
+    champs.debatSecondes.value = preset.debatSecondes;
+    champs.voteSecondes.value = preset.voteSecondes;
+    const option = [...champs.ordre.options].find(o => ordreActif(o.value, id => preset.composition[id]).join(',') === preset.ordre.join(','));
+    champs.ordre.value = option?.value ?? champs.ordre.options[0].value;
+    champs.compositionId.value = preset.id;
+    champs.nomPartage.value = preset.nom;
+    form.querySelector('[data-modifier]').disabled = false;
   } else if (source === 'favori') {
     const choix = favoris[index]?.champs;
     if (choix) {
@@ -921,6 +1008,25 @@ function appliquerComposition(form) {
       for (const nom of ['maire', 'discret', ...rolesOptionnels]) champs[nom].checked = Boolean(choix[nom]);
     }
   }
+}
+
+async function enregistrerComposition(form, modifier) {
+  const champs = form.elements;
+  const nom = champs.nomPartage.value.trim();
+  if (!nom) throw new Error('Donne un nom à cette composition.');
+  for (const champ of [champs.loups, champs.debatSecondes, champs.voteSecondes]) {
+    if (!champ.reportValidity()) return;
+  }
+  const reglages = reglageSalon(new FormData(form));
+  const resultat = await requete('/api/admin/compositions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...reglages, nom, ...(modifier && { id: champs.compositionId.value }) }),
+  });
+  compositionsPartagees = resultat.compositions;
+  champs.preset.innerHTML = optionsComposition();
+  champs.preset.value = 'partagee-' + compositionsPartagees.findIndex(preset => preset.id === resultat.composition.id);
+  configurer(form, 'preset');
+  afficherAvis('Composition partagée enregistrée.', 4000);
 }
 
 function enregistrerFavori(form) {
@@ -942,13 +1048,12 @@ function enregistrerFavori(form) {
 
 function configurer(form, evenement) {
   const champs = form.elements;
-  const { total, loups, voyante, sorciere, chasseur, mode, maire, ordre } = champs;
+  const { total, loups, voyante, sorciere, chasseur, mode, ordre } = champs;
   if (evenement === 'preset') appliquerComposition(form);
   if (['total', 'mode'].includes(evenement)) {
     loups.value = Number(total.value) >= 12 ? 3 : Number(total.value) >= 8 ? 2 : 1;
     if (evenement === 'mode') {
       sorciere.checked = chasseur.checked = mode.value === 'classique';
-      maire.checked = mode.value === 'classique';
       voyante.checked = true;
       for (const id of nouveauxRoles) champs[id].checked = false;
     }
@@ -1013,13 +1118,23 @@ function contenuFeuille(type, contexte) {
       <p>Le jeu sera indisponible pendant le redémarrage. Les parties sauvegardées seront reprises à la reconnexion.</p>
       <label class="case"><input type="checkbox" name="confirme" required>Je confirme la mise à jour et le redémarrage.</label>
       <button class="btn pri" data-envoi>${icone('download', 18)}Lancer la mise à jour</button></form>`];
+    case 'gerer-salon': {
+      const { salle, operation } = contexte;
+      const supprimer = operation === 'supprimer';
+      return [supprimer ? 'Supprimer le salon' : 'Terminer le salon', `<form data-form="gerer-salon" data-code="${salle}" data-operation="${operation}">
+        <p>${supprimer ? 'La suppression efface définitivement le salon et ses accès.' : 'Les joueurs ne pourront plus jouer. Le salon restera dans le panneau.'}</p>
+        <button class="btn pri" data-envoi>${icone(supprimer ? 'trash' : 'lock', 18)}${supprimer ? 'Supprimer' : 'Terminer'} le salon ${salle}</button></form>`];
+    }
     case 'rechercher': return ['Rechercher', recherche()];
     case 'plus': {
       const tuile = (texte, nom, id) => `<button type="button" class="qt" data-action="${id}">${icone(nom, 22)}${texte}</button>`;
+      if (interfaceJoueur()) return ['Plus', `<div class="menu-plus">
+        <button type="button" class="btn" data-nav="journal">${icone('list', 18)}Journal</button>
+        ${action('Quitter l’écran', 'logout', 'sortir', 'gh')}</div>`];
       return ['Plus', `<div class="q-tuiles plus-t menu-plus-tuiles">
         ${tuile('Mes salons', 'users', 'liste')}${tuile('Apparence', 'palette', 'apparence')}
         ${tuile('Comment jouer', 'help', 'regles')}${tuile('Rechercher', 'search', 'rechercher')}</div>
-        ${etat ? `<div class="menu-plus">${!etat.demo ? action('Inviter ou récupérer une place', 'share', 'invitation') : ''}
+        ${etat && etat.resume.statut !== 'cloturee' ? `<div class="menu-plus">${!etat.demo ? action('Inviter ou récupérer une place', 'share', 'invitation') : ''}
         ${etat.hote && !etat.demo && etat.joueurs.length > 1 ? action('Choisir un co-hôte', 'users', 'cohote') : ''}
         ${action('Quitter l’écran', 'logout', 'sortir', 'gh')}</div>` : ''}`];
     }
@@ -1044,7 +1159,7 @@ function contenuFeuille(type, contexte) {
     case 'regles': return ['Comment jouer', `<div class="faq">
       <details open><summary>Comment rejoindre les autres ?</summary><p>Scanne le QR code de l’hôte ou saisis les six caractères du salon, puis choisis ton pseudo. Garde le même navigateur pour retrouver ta place.</p></details>
       <details><summary>Que faire le jour et la nuit ?</summary><p>La nuit, seuls les rôles appelés agissent. Le jour, discute avec les autres, puis vote sur ton téléphone. La meute gagne à la parité et le village gagne s’il élimine tous les loups. Si Cupidon a lié un loup et un membre du village, la partie continue jusqu’à la mort du couple ou sa victoire en tant que deux derniers survivants.</p></details>
-      <details><summary>Que se passe-t-il si tout le monde quitte ?</summary><p>Le salon apparaît en pause dans Mes salons. Ouvre-le depuis le même navigateur pour retrouver ta place. Sur Proxmox, le salon est sauvegardé et reste accessible après un redémarrage. Il expire après 24 heures sans activité.</p></details>
+      <details><summary>Que se passe-t-il si tout le monde quitte ?</summary><p>Le salon apparaît en pause dans Mes salons. Ouvre-le depuis le même navigateur pour retrouver ta place. Sur Proxmox, le salon est sauvegardé après un redémarrage. L’administration peut terminer ou supprimer le salon.</p></details>
       </div>`];
     default: return ['', ''];
   }
@@ -1273,6 +1388,16 @@ document.addEventListener('submit', event => {
       afficher();
       return;
     }
+    if (actionForm === 'gerer-salon') {
+      const { code: salle, operation } = form.dataset;
+      await requete(`/api/admin/salons/${salle}/${operation}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirme: true }),
+      });
+      fermerFeuille();
+      await chargerAdmin();
+      afficherAvis(operation === 'supprimer' ? 'Salon supprimé.' : 'Salon clôturé.', 5000);
+      return;
+    }
     if (actionForm === 'creer') {
       const session = await api('', { nom: data.get('nom'), ...reglageSalon(data) });
       fermerFeuille(false);
@@ -1327,6 +1452,16 @@ document.addEventListener('click', event => {
   }
   if (id === 'liste') return naviguer('salons');
   if (id === 'favori') return enregistrerFavori(cible.closest('form'));
+  if (id === 'enregistrer-composition' && enHote) {
+    return executer(cible, () => enregistrerComposition(cible.closest('form'), cible.hasAttribute('data-modifier')));
+  }
+  if (id === 'gerer-salon' && enHote) {
+    const { code: salle, operation } = cible.dataset;
+    if (codeValide.test(salle) && ['terminer', 'supprimer'].includes(operation)) {
+      ouvrirFeuille('gerer-salon', { salle, operation });
+    }
+    return;
+  }
   if (id === 'actualiser-admin') return chargerAdmin();
   if (id === 'section-admin') {
     const section = document.getElementById(cible.dataset.section);
@@ -1389,7 +1524,7 @@ document.addEventListener('click', event => {
     return;
   }
   executer(cible, async () => {
-    if (id === 'demo') {
+    if (id === 'demo' && enHote) {
       const session = await requete('/api/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       fermerFeuille(false);
       enregistrer(session);

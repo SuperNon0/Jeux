@@ -49,6 +49,9 @@ Applique avec `systemctl daemon-reload && systemctl restart jeux`. Le jeu contac
 
 Une fois connecté au lien hôte, ouvre **Administration** pour voir tous les salons du serveur, y compris les salons en pause. Le panneau affiche leur état et le nombre de joueurs, sans afficher leurs cartes ni leurs votes.
 
+- **Tous les salons** permet de terminer un salon et de garder son entrée dans le panneau. **Supprimer** retire définitivement le salon et les accès des joueurs. Les salons restent dans le panneau jusqu’à leur suppression manuelle.
+- **Créer un salon → Compositions partagées** permet d’enregistrer une configuration pour la retrouver sur le lien hôte depuis un autre navigateur. Pour la modifier, charge-la dans **Composition rapide**, change les règles et choisis **Mettre à jour la composition**.
+- **Essayer la démo** ouvre une partie privée avec quatre joueurs simulés, y compris l’élection du maire.
 - **Annonces audio** permet d’écouter un fichier, de remplacer une annonce existante ou d’ajouter un MP3 à la bibliothèque. Taille maximale de 8 Mio. Dans **Son d’un événement**, tu peux aussi associer un MP3 à une étape du jeu, le préécouter et régler le volume des annonces. Les MP3 importés restent dans `/var/lib/jeux/audio` quand une mise à jour remplace le code.
 - **Mise à jour** récupère la branche `main` de `SuperNon0/Jeux`. Le panneau affiche le téléchargement, la préparation des dépendances, le redémarrage et la vérification du service. S’il ne redémarre pas correctement, le service restaure le dossier précédent. Les parties et les sessions sauvegardées reprennent après reconnexion. Les journaux sont accessibles avec `journalctl -u jeux-update.service -n 50`.
 
@@ -95,13 +98,14 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 
 ## Lancer une partie
 
-- **Essayer la démo** ouvre une partie privée depuis un seul téléphone avec quatre joueurs simulés.
 - L’hôte choisit une composition prête à jouer ou règle les rôles à la main. Les compositions favorites sont gardées sur le navigateur.
 - Le compteur de partie affiche le temps écoulé hors pauses. Sur une nouvelle partie, les durées par défaut sont de 2 minutes pour le débat et de 1 minute pour le vote. La démo utilise 1 minute et 45 secondes. Tu peux régler ces durées dans le formulaire du salon.
 - Si la narration est active, le compte à rebours commence à la fin de l’annonce de la phase. L’animateur peut aussi lancer le chrono immédiatement. Si l’annonce ne se termine pas, le serveur lance le chrono au plus tard après 90 secondes. Le débat peut être prolongé de 30 secondes. À la fin du vote, les bulletins manquants deviennent des abstentions.
 - L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes.
 - Quand le salon est plein, l’hôte peut activer la narration sur son téléphone puis lancer la partie.
-- Chaque joueur retourne sa carte et confirme qu’il est prêt. Le serveur avance quand toutes les actions attendues sont terminées. L’hôte clôt le débat pour ouvrir le vote.
+- L’hôte clique sur **Tirer les cartes**. Une animation joue sur les téléphones, puis chaque carte s’ouvre en grand, face cachée. Chaque joueur retourne la sienne puis confirme **Je suis prêt**. L’hôte lance la première nuit une fois que tous les joueurs ont confirmé.
+- L’élection du maire est activée par défaut dans le formulaire. Elle a lieu après le premier débat et avant le vote d’élimination.
+- Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Le résultat s’affiche et l’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
 
 En cas d’égalité au vote des loups, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Le village gagne une fois le dernier loup éliminé. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants, sauf si un couple de camps opposés est encore en jeu.
@@ -119,7 +123,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 
 ## Retrouver un salon
 
-« Mes salons » conserve les invitations et tes places sur ce navigateur. Si tout le monde ferme le jeu, le salon passe en pause après environ 15 secondes, avec ses rôles, ses votes et l’étape en cours. « Quitter l’écran » marque immédiatement ta place hors ligne. Rouvre le salon pour reprendre. Sur Proxmox, l’état est sauvegardé dans `/var/lib/jeux/donnees`. Tu peux rouvrir ta session après un redémarrage ou une mise à jour. Le serveur retire les salons après 24 heures sans activité.
+« Mes salons » conserve les invitations et tes places sur ce navigateur. Si tout le monde ferme le jeu, le salon passe en pause après environ 15 secondes, avec ses rôles, ses votes et l’étape en cours. « Quitter l’écran » marque immédiatement ta place hors ligne. Rouvre le salon pour reprendre. Sur Proxmox, l’état est sauvegardé dans `/var/lib/jeux/donnees`. Tu peux rouvrir ta session après un redémarrage ou une mise à jour.
 
 L’interface utilise le [kit Encre](https://github.com/SuperNon0/Biblioth-que-de-filme/tree/claude/project-thread-vegilo) avec ses icônes et ses polices locales.
 
@@ -129,37 +133,55 @@ Les annonces fournies sont dans [public/audio](public/audio). Pour modifier une 
 
 Une pause de 2 secondes sépare les annonces. Le mode discret joue les transitions communes et masque les appels individuels de nuit. Les consignes des rôles concernés restent disponibles sur leurs écrans privés.
 
-### Annonces ajoutées en 0.2.1
+### Pistes fournies
 
-Les 24 enregistrements d’origine sont conservés. Les annonces ci-dessous sont fournies avec la voix française Tom de Piper. Tu peux les remplacer depuis le panneau Administration.
+Les 42 annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
 
-| Nom du fichier | Phrase |
+| Nom du fichier | Phrase ou son |
 | --- | --- |
-| `fin-voyante.mp3` | La Voyante se rendort. |
-| `fin-loups.mp3` | Les Loups-Garous se rendorment. |
-| `fin-sorciere.mp3` | La Sorcière se rendort. |
-| `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
-| `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
-| `egalite-vote-hote.mp3` | L’égalité persiste. Relancez le vote ou tirez au sort parmi les personnes à égalité. |
-| `tir-chasseur.mp3` | Le Chasseur a utilisé son dernier tir. Consultez le résultat sur votre téléphone. |
-| `match-nul.mp3` | La partie se termine. Aucun camp ne survit. |
-
-### Annonces ajoutées en 0.3.0
-
-Les dix nouvelles pistes utilisent également la voix française Tom de Piper.
-
-| Nom du fichier | Phrase |
-| --- | --- |
-| `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |
-| `fin-cupidon.mp3` | Cupidon se rendort. |
 | `amoureux-lies.mp3` | Les amoureux découvrent leur lien sur leur téléphone. |
-| `mort-amoureux.mp3` | Deux personnes étaient liées. La personne encore en jeu a été emportée avec l’autre. |
-| `victoire-amoureux.mp3` | Les amoureux sont les derniers survivants. Ils remportent la partie ensemble. |
-| `salvateur.mp3` | Le Salvateur se réveille. Choisis la personne que tu veux protéger cette nuit. |
-| `fin-salvateur.mp3` | Le Salvateur se rendort. |
+| `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
+| `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
+| `chasseur.mp3` | Le Chasseur a été éliminé. Il doit choisir une personne à emporter avec lui. |
 | `corbeau.mp3` | Le Corbeau se réveille. Choisis la personne qui recevra deux voix contre elle au prochain vote d’élimination. |
+| `cri-corbeau.mp3` | Croassement après la validation de la cible du Corbeau, en narration classique. |
+| `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |
+| `debut-debat.mp3` | Le débat commence. À vous de parler. |
+| `departage-maire.mp3` | Le maire doit départager les joueurs arrivés en tête. |
+| `distribution.mp3` | Découvrez votre carte, puis gardez votre rôle secret. Quand vous êtes prêts, confirmez sur votre téléphone. |
+| `egalite-election.mp3` | L’élection se termine sur une égalité. L’hôte peut relancer le vote ou lancer un tirage au sort. |
+| `egalite-elimination.mp3` | Le vote se termine sur une égalité. |
+| `egalite-vote-hote.mp3` | L’égalité persiste. Relancez le vote ou tirez au sort parmi les personnes à égalité. |
+| `election-maire.mp3` | Le village doit élire son maire. Votez sur votre téléphone. |
 | `fin-corbeau.mp3` | Le Corbeau se rendort. |
+| `fin-cupidon.mp3` | Cupidon se rendort. |
+| `fin-debat.mp3` | Le débat est terminé. Préparez-vous à voter. |
+| `fin-loups.mp3` | Les Loups-Garous se rendorment. |
+| `fin-salvateur.mp3` | Le Salvateur se rendort. |
+| `fin-sorciere.mp3` | La Sorcière se rendort. |
+| `fin-voyante.mp3` | La Voyante se rendort. |
+| `le-village-se-reveille.mp3` | Le village se réveille. |
+| `le-village-sendort.mp3` | Le village s’endort. |
+| `loups.mp3` | Les Loups-Garous se réveillent. Choisissez votre cible. |
+| `maire-elu.mp3` | Le village a élu son maire. |
 | `marque-corbeau.mp3` | Le Corbeau a laissé une marque. La personne désignée commencera le prochain vote d’élimination avec deux voix contre elle. |
+| `match-nul.mp3` | La partie se termine. Aucun camp ne survit. |
+| `mort-amoureux.mp3` | Deux personnes étaient liées. La personne encore en jeu a été emportée avec l’autre. |
+| `nouveau-maire.mp3` | Le village a un nouveau maire. |
+| `nuit-avec-victimes.mp3` | La nuit a fait des victimes. Consultez le résultat sur votre téléphone. |
+| `nuit-sans-victime.mp3` | Cette nuit, personne n’a été éliminé. |
+| `resultat-vote.mp3` | Le vote est terminé. Consultez le résultat sur votre téléphone. |
+| `salvateur.mp3` | Le Salvateur se réveille. Choisis la personne que tu veux protéger cette nuit. |
+| `second-tour.mp3` | Le vote reprend. Choisissez parmi les candidats arrivés à égalité. |
+| `sorciere.mp3` | La Sorcière se réveille. Tu peux utiliser tes potions ou les garder pour une autre nuit. |
+| `succession-maire.mp3` | Le maire a été éliminé. Il doit désigner son successeur. |
+| `tir-chasseur.mp3` | Le Chasseur a utilisé son dernier tir. Consultez le résultat sur votre téléphone. |
+| `tirage-au-sort.mp3` | Le sort va départager les candidats à égalité. |
+| `victoire-amoureux.mp3` | Les amoureux sont les derniers survivants. Ils remportent la partie ensemble. |
+| `victoire-loups.mp3` | Les Loups-Garous ont pris le dessus. Ils remportent la partie. |
+| `victoire-village.mp3` | Le village a éliminé tous les Loups-Garous. Le village remporte la partie. |
+| `vote-elimination.mp3` | Le vote d’élimination est ouvert. Les joueurs encore en jeu peuvent voter sur leur téléphone. |
+| `voyante.mp3` | La Voyante se réveille. Choisis la personne dont tu veux découvrir le rôle. |
 
 ## Vérifier
 

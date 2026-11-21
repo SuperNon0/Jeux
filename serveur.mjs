@@ -76,12 +76,11 @@ async function modeAcces(req) {
 const salons = new Map();
 const presenceValide = 15_000;
 const dureeDebatDemo = 60;
-const dureeSalon = 24 * 60 * 60_000;
-const dureeDemo = 2 * 60 * 60_000;
 const dureeReprise = 10 * 60_000;
 const annoncesDisponibles = (await readdir(audioInclus))
   .filter(nom => nomAudio.test(nom)).sort().map(nom => nom.slice(0, -4));
 let son = { associations: {}, volume: 100 };
+let compositions = [];
 let dernierEnregistrement = Date.now();
 
 function sauvegarder() {
@@ -92,7 +91,7 @@ function sauvegarder() {
   }));
   const temporaire = `${fichierDonnees}.tmp`;
   try {
-    writeFileSync(temporaire, JSON.stringify({ version: 1, date, salons: donnees, son }), { mode: 0o600, flush: true });
+    writeFileSync(temporaire, JSON.stringify({ version: 1, date, salons: donnees, son, compositions }), { mode: 0o600, flush: true });
     renameSync(temporaire, fichierDonnees);
     dernierEnregistrement = date;
   } catch (incident) {
@@ -111,10 +110,13 @@ function charger() {
   const archive = JSON.parse(contenu);
   if (archive.version !== 1 || !Array.isArray(archive.salons)) throw new Error('Version de sauvegarde Jeux inconnue.');
   son = archive.son ?? son;
+  compositions = archive.compositions ?? compositions;
   for (const { sessions, demandes, partie, ...entree } of archive.salons) {
-    if (Date.now() - entree.activite >= limiteSalon(entree)) continue;
     entree.config.narration = false;
-    if (entree.demo && !entree.config.debatSecondes) entree.config.debatSecondes = dureeDebatDemo;
+    if (entree.demo) {
+      entree.config.maire = true;
+      if (!entree.config.debatSecondes) entree.config.debatSecondes = dureeDebatDemo;
+    }
     const salon = { ...entree, presence: new Map(), sessions: new Map(sessions), demandes: new Map(demandes),
       partie: partie ? Partie.charger(partie, entree.joueurs, entree.config) : null };
     if (entree.demo && salon.partie?.tour.type === 'debat' && !partie.tour.echeance && !partie.tour.preparation) {
@@ -125,23 +127,13 @@ function charger() {
   }
 }
 
-function limiteSalon(salon) { return salon.demo ? dureeDemo : dureeSalon; }
-
-function nettoyerSalons(maintenant = Date.now()) {
-  let change = false;
-  for (const [code, salon] of salons) {
-    if (maintenant - salon.activite >= limiteSalon(salon)) { salons.delete(code); change = true; }
-  }
-  return change;
-}
-
 function enLigne(salon, id, maintenant = Date.now()) {
   return salon.bots?.includes(id) || maintenant - (salon.presence.get(id) ?? 0) < presenceValide;
 }
 
 function actualiserPartie(salon, maintenant = Date.now()) {
   const partie = salon.partie;
-  if (!partie || partie.gagnant) return false;
+  if (salon.cloture || !partie || partie.gagnant) return false;
   if (!enLigne(salon, salon.config.hote, maintenant)) salon.config.narration = false;
   if (![...salon.presence.values()].some(date => maintenant - date < presenceValide)) {
     return partie.geler('absence', maintenant);
@@ -168,7 +160,7 @@ charger();
 setInterval(() => {
   try {
     const maintenant = Date.now();
-    let change = nettoyerSalons(maintenant);
+    let change = false;
     for (const salon of salons.values()) if (actualiserPartie(salon, maintenant)) change = true;
     if (change || (maintenant - dernierEnregistrement >= 30_000 &&
         [...salons.values()].some(salon => salon.activite > dernierEnregistrement))) sauvegarder();
@@ -181,8 +173,8 @@ function pointer(salon, id) {
 }
 
 function resume(salon, id) {
-  const enLigneNombre = salon.joueurs.filter(j => enLigne(salon, j.id)).length;
-  const statut = salon.partie?.gagnant ? 'terminee'
+  const enLigneNombre = salon.cloture ? 0 : salon.joueurs.filter(j => enLigne(salon, j.id)).length;
+  const statut = salon.cloture ? 'cloturee' : salon.partie?.gagnant ? 'terminee'
     : salon.partie?.pause || enLigneNombre === 0 ? 'pause'
     : salon.partie ? 'en-cours' : 'ouvert';
   return {
@@ -221,12 +213,15 @@ function duree(valeur = 0) {
   return valeur;
 }
 
-function creer(data, demo = false) {
-  nettoyerSalons();
-  if (salons.size >= 500) throw erreurHttp(503, 'Le serveur a atteint sa capacité de salons.');
+function reglagePartie(data) {
   const regles = verifierConfiguration(data.total, data.composition, data.ordre);
-  const config = { ...regles, maire: data.maire === true, discret: data.discret === true,
+  return { ...regles, maire: data.maire === true, discret: data.discret === true,
     debatSecondes: duree(data.debatSecondes ?? 120), voteSecondes: duree(data.voteSecondes ?? 60) };
+}
+
+function creer(data, demo = false) {
+  if (salons.size >= 500) throw erreurHttp(503, 'Le serveur a atteint sa capacité. Supprime des salons depuis Administration.');
+  const config = reglagePartie(data);
   let code;
   do { code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''); }
   while (salons.has(code));
@@ -256,36 +251,39 @@ function animateur(salon, id) {
 }
 
 function passerDisponibles(salon) {
-  if (!salon.partie || ['debat', 'egaliteElection', 'egaliteVote'].includes(salon.partie.tour.type)) return [];
+  if (!salon.partie || ['distribution', 'lancement', 'debat', 'attenteNuit', 'egaliteElection', 'egaliteVote'].includes(salon.partie.tour.type)) return [];
   return salon.partie.absents(id => enLigne(salon, id));
 }
 
 function vue(salon, joueur) {
   const hote = joueur === salon.config.hote;
   const anime = animateur(salon, joueur);
-  const partie = salon.partie?.vue(joueur);
+  const partie = salon.cloture ? null : salon.partie?.vue(joueur);
   if (partie && anime) partie.peutPasser = passerDisponibles(salon).length > 0;
   return {
     code: salon.code, total: salon.total, joueur, hote, anime, hoteId: salon.config.hote, cohoteId: salon.config.cohote,
     demo: salon.demo, horloge: Date.now(), son,
-    joueurs: salon.joueurs.map(j => ({ ...j, enLigne: enLigne(salon, j.id) })),
+    joueurs: salon.joueurs.map(j => ({ ...j, enLigne: !salon.cloture && enLigne(salon, j.id) })),
     resume: resume(salon, joueur),
     config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire, discret: salon.config.discret },
     partie: partie ?? null,
-    demandes: hote ? [...salon.demandes.values()].filter(d => d.statut === 'attente' && Date.now() - d.date <= dureeReprise).map(({ id, joueur }) => ({
+    demandes: hote && !salon.cloture ? [...salon.demandes.values()].filter(d => d.statut === 'attente' && Date.now() - d.date <= dureeReprise).map(({ id, joueur }) => ({
       id, nom: salon.joueurs.find(j => j.id === joueur).nom,
     })) : [],
   };
 }
 
 function gerer(salon, action, data, token, mode) {
-  if (salon.demo && !salon.sessions.has(token)) throw erreurHttp(404, 'Cette démo est privée.');
+  if (salon.demo && (mode !== 'hote' || !salon.sessions.has(token))) throw erreurHttp(404, 'Cette démo est réservée à son administrateur.');
   if (!salon.demo && mode === 'invite' && (salon.sessions.get(token) === salon.config.hote ||
       (action === 'recuperer' && data.joueur === salon.config.hote))) {
     throw Object.assign(new Error('Cette place doit être ouverte avec le lien hôte.'), { status: 403 });
   }
   if (mode === 'hote' && action === 'rejoindre') {
     throw Object.assign(new Error('Rejoins la partie avec le lien d’invitation.'), { status: 403 });
+  }
+  if (salon.cloture && !['apercu', 'etat', 'absence'].includes(action)) {
+    throw erreurHttp(410, 'Cette partie a été terminée par l’administration.');
   }
   if (action === 'rejoindre') {
     if (salon.partie || salon.joueurs.length >= salon.total) throw new Error('Ce salon est complet ou la partie a commencé.');
@@ -325,6 +323,7 @@ function gerer(salon, action, data, token, mode) {
   const joueur = salon.sessions.get(token);
   if (!joueur) throw Object.assign(new Error('Session expirée. Demande à reprendre ta place.'), { status: 401 });
   if (action === 'apercu') return resume(salon, joueur);
+  if (salon.cloture) return action === 'etat' ? vue(salon, joueur) : resume(salon, joueur);
   if (action === 'absence') {
     salon.presence.delete(joueur);
     if (joueur === salon.config.hote) salon.config.narration = false;
@@ -471,15 +470,54 @@ async function enregistrerAudio(req, nom) {
   return { nom };
 }
 
+function modifierSalon(code, action, data) {
+  const salon = salons.get(code);
+  if (!salon) throw erreurHttp(404, 'Ce salon n’existe plus.');
+  if (data.confirme !== true) throw erreurHttp(400, 'Confirme cette action.');
+  if (action === 'terminer') {
+    if (salon.cloture) return;
+    salon.cloture = Date.now();
+    try { sauvegarder(); }
+    catch (incident) { delete salon.cloture; throw incident; }
+  } else {
+    salons.delete(code);
+    try { sauvegarder(); }
+    catch (incident) { salons.set(code, salon); throw incident; }
+  }
+}
+
+function enregistrerComposition(data) {
+  const nom = typeof data.nom === 'string' ? data.nom.trim() : '';
+  if (!nom || nom.length > 35) throw erreurHttp(400, 'Saisis un nom de 1 à 35 caractères.');
+  const ancienne = data.id === undefined ? null : compositions.find(composition => composition.id === data.id);
+  if (data.id !== undefined && !ancienne) throw erreurHttp(404, 'Cette composition n’existe plus.');
+  if (compositions.some(composition => composition !== ancienne && composition.nom.toLowerCase() === nom.toLowerCase())) {
+    throw erreurHttp(409, 'Ce nom de composition est déjà utilisé.');
+  }
+  const nouvelle = { id: ancienne?.id ?? randomUUID(), nom, total: data.total, ...reglagePartie(data) };
+  const avant = compositions;
+  compositions = ancienne ? compositions.map(composition => composition === ancienne ? nouvelle : composition) : [...compositions, nouvelle];
+  try { sauvegarder(); }
+  catch (incident) { compositions = avant; throw incident; }
+  return { composition: nouvelle, compositions };
+}
+
 async function admin(req, res, chemin, mode) {
   if (mode !== 'hote') throw erreurHttp(403, 'Ce panneau est réservé au lien hôte protégé par Cloudflare Access.');
   if (req.method === 'GET' && chemin === '/api/admin') {
-    if (nettoyerSalons()) sauvegarder();
     const liste = [...salons.values()].map(salon => {
       const { nom, ...infos } = resume(salon, salon.config.hote);
       return { ...infos, hote: nom };
     }).sort((a, b) => b.activite - a.activite);
-    return json(res, 200, { salons: liste, audios: await audiosAdmin(), stockageAudio: Boolean(dossierAudio), version, son, annonces: annoncesDisponibles, maintenance: await statutMaintenance() });
+    return json(res, 200, { salons: liste, compositions, audios: await audiosAdmin(), stockageAudio: Boolean(dossierAudio), version, son, annonces: annoncesDisponibles, maintenance: await statutMaintenance() });
+  }
+  const gestion = chemin.match(/^\/api\/admin\/salons\/([A-HJ-NP-Z2-9]{6})\/(terminer|supprimer)$/);
+  if (req.method === 'POST' && gestion) {
+    modifierSalon(gestion[1], gestion[2], await lire(req));
+    return json(res, 200, { ok: true });
+  }
+  if (req.method === 'POST' && chemin === '/api/admin/compositions') {
+    return json(res, 200, enregistrerComposition(await lire(req)));
   }
   if (req.method === 'POST' && chemin === '/api/admin/son') {
     const { evenement, fichier, volume } = await lire(req);
@@ -534,12 +572,13 @@ const serveur = createServer(async (req, res) => {
     if (!mode) return json(res, 421, { erreur: 'Utilise le lien hôte ou le lien d’invitation.' });
     if (chemin === '/api/admin' || chemin.startsWith('/api/admin/')) return await admin(req, res, chemin, mode);
     if (req.method === 'GET' && chemin === '/api/configuration') {
-      return json(res, 200, { mode, origineInvites: acces?.invites.origin, son });
+      return json(res, 200, { mode, origineInvites: acces?.invites.origin, son, ...(mode === 'hote' && { compositions }) });
     }
     if (req.method === 'POST' && chemin === '/api/demo') {
+      if (mode !== 'hote') throw erreurHttp(403, 'La démo est réservée à l’administration.');
       await lire(req);
       return json(res, 201, creer({ nom: 'Toi', total: 5,
-        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, debatSecondes: dureeDebatDemo, voteSecondes: 45 }, true));
+        composition: { villageois: 2, loups: 1, voyante: 1, sorciere: 1 }, maire: true, debatSecondes: dureeDebatDemo, voteSecondes: 45 }, true));
     }
     if (req.method === 'POST' && chemin === '/api/salons') {
       if (mode === 'invite') return json(res, 403, { erreur: 'Seul le lien hôte permet de créer un salon.' });
@@ -549,11 +588,9 @@ const serveur = createServer(async (req, res) => {
     if (route) {
       const [, code, action] = route;
       const salon = salons.get(code);
-      if (!salon || Date.now() - salon.activite >= limiteSalon(salon)) {
-        if (salons.delete(code)) sauvegarder();
-        return json(res, 404, { erreur: 'Ce salon n’existe plus.' });
-      }
+      if (!salon) throw erreurHttp(404, 'Ce salon n’existe plus.');
       if (salon.demo && req.method === 'GET') return json(res, 404, { erreur: 'Cette démo est privée.' });
+      if (salon.cloture && req.method === 'GET') throw erreurHttp(410, 'Cette partie a été terminée par l’administration.');
       if (req.method === 'GET' && action === 'joueurs') {
         const joueurs = mode === 'invite' ? salon.joueurs.filter(j => j.id !== salon.config.hote) : salon.joueurs;
         return json(res, 200, { joueurs });
@@ -568,7 +605,9 @@ const serveur = createServer(async (req, res) => {
         return res.end(png);
       }
       if (req.method !== 'POST') return json(res, 405, { erreur: 'Méthode invalide.' });
-      return json(res, 200, gerer(salon, action, await lire(req), req.headers.authorization?.replace(/^Bearer /, ''), mode));
+      const data = await lire(req);
+      if (salons.get(code) !== salon) throw erreurHttp(404, 'Ce salon n’existe plus.');
+      return json(res, 200, gerer(salon, action, data, req.headers.authorization?.replace(/^Bearer /, ''), mode));
     }
     const fichier = chemin === '/' ? '/index.html' : chemin;
     if (!['GET', 'HEAD'].includes(req.method) ||

@@ -62,7 +62,7 @@ export class Partie {
 
   changerCohote(id) {
     this.config.cohote = id;
-    if (['debat', 'egaliteVote', 'egaliteElection'].includes(this.tour.type)) this.tour.acteurs = this.animateurs();
+    if (['debat', 'attenteNuit', 'egaliteVote', 'egaliteElection'].includes(this.tour.type)) this.tour.acteurs = this.animateurs();
   }
 
   geler(type, maintenant = Date.now()) {
@@ -195,6 +195,8 @@ export class Partie {
 
   debat() { this.phase('debat', this.animateurs(), [], 'debut-debat'); }
 
+  attendreNuit() { this.phase('attenteNuit', this.animateurs(), []); }
+
   ouvrirVote() {
     this.annoncer('fin-debat');
     if (this.config.maire && !this.maire) this.vote('election');
@@ -260,7 +262,7 @@ export class Partie {
         this.annoncer('marque-corbeau', `${this.nom(this.marqueCorbeau)} est marqué par le Corbeau et reçoit deux voix au premier vote d’élimination.`);
       }
       this.debat();
-    } else this.nuit();
+    } else this.attendreNuit();
   }
 
   eliminerAuVote(id) {
@@ -275,6 +277,13 @@ export class Partie {
       throw new Error('Cette action n’est plus disponible.');
     }
     if (type === 'debat') { this.ouvrirVote(); return; }
+    if (type === 'lancement') {
+      this.debutPartie = Date.now();
+      this.tempsSuspendu = 0;
+      this.nuit();
+      return;
+    }
+    if (type === 'attenteNuit') { this.nuit(); return; }
     if (type === 'egaliteElection' || type === 'egaliteVote') {
       if (!['revoter', 'tirer'].includes(choix)) throw new Error('Choisis comment départager les candidats.');
       const election = type === 'egaliteElection';
@@ -319,7 +328,7 @@ export class Partie {
     const { type, reponses } = this.tour;
     const [id, choix] = reponses.entries().next().value ?? [];
     switch (type) {
-      case 'distribution': this.nuit(); break;
+      case 'distribution': this.phase('lancement', [this.config.hote], []); break;
       case 'voyante':
         this.historiques.get(id).push({ nuit: this.jour, nom: this.nom(choix), role: this.cartes.get(choix) });
         this.terminerRoleNocturne(type);
@@ -341,6 +350,7 @@ export class Partie {
       }
       case 'corbeau':
         this.cibleCorbeau = choix;
+        if (!this.config.discret) this.annoncer('cri-corbeau');
         this.terminerRoleNocturne(type);
         break;
       case 'election': {
@@ -359,7 +369,7 @@ export class Partie {
         this.marqueCorbeau = null;
         if (!premiers.length) {
           this.annoncer('aucun-vote-elimination', 'Aucun vote reçu. Personne n’est éliminé.');
-          this.nuit();
+          this.attendreNuit();
         } else if (premiers.length === 1) this.eliminerAuVote(premiers[0]);
         else {
           this.annoncer('egalite-elimination');

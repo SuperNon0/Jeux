@@ -192,6 +192,23 @@ progress::-moz-progress-bar { background: var(--accent); }
 .cible .medaille { margin-left: auto; }
 .cible input, .modes input, .case input { accent-color: var(--accent); width: 17px; height: 17px; flex: none; margin: 0; }
 .carte-zone { text-align: center; perspective: 900px; }
+.carte-distribuee { max-width: 640px; min-height: 68dvh; margin-inline: auto; }
+.carte-distribuee .carte { width: min(78vw, 43dvh, 360px); }
+.tirage-cartes { position: relative; min-height: clamp(230px, 49dvh, 390px); }
+.tirage-cartes .art {
+  position: absolute; top: 50%; left: 50%; width: min(47vw, 220px);
+  border-radius: var(--r-lg); box-shadow: var(--shadow);
+  animation: distribuer-carte .9s var(--ease) both;
+}
+.tirage-cartes .art:nth-child(1) { --deplacement: -31%; --angle: -21deg; }
+.tirage-cartes .art:nth-child(2) { --deplacement: 32%; --angle: 19deg; animation-delay: .08s; }
+.tirage-cartes .art:nth-child(3) { --deplacement: 0%; --angle: 1deg; animation-delay: .14s; }
+@keyframes distribuer-carte {
+  0% { opacity: 0; transform: translate(-50%, -30%) scale(.76); }
+  16% { opacity: 1; }
+  66% { opacity: 1; transform: translate(calc(-50% + var(--deplacement)), -54%) rotate(var(--angle)); }
+  100% { opacity: 0; transform: translate(calc(-50% + var(--deplacement)), -64%) rotate(var(--angle)) scale(1.08); }
+}
 .carte {
   width: min(100%, 285px); aspect-ratio: 1; margin: 16px auto; border-radius: var(--r-lg);
   position: relative; display: block; transform-style: preserve-3d;
@@ -299,10 +316,15 @@ form, .options, .champ-jeu, .faq { display: grid; gap: 10px; }
 .panneau-admin { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
 .liste-admin-salons { list-style: none; margin: 6px 0 0; padding: 0; }
 .liste-admin-salons li {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0;
+  display: grid; gap: 5px; padding: 10px 0;
   border-bottom: 1px solid var(--line); overflow-wrap: anywhere;
 }
 .liste-admin-salons small { display: block; }
+.joueur-simple .entete-actions [data-action], .joueur-simple .side-search,
+.joueur-simple .side-foot [data-action="apparence"] { display: none; }
+.joueur-partie { max-width: 720px; }
+#joueurs-repliables > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; min-height: 44px; }
+#joueurs-repliables .tableau-joueurs { border: 0; padding: 0; background: none; }
 .panneau-admin audio { width: 100%; }
 .panneau-admin .champ-jeu input[type=file] { height: auto; min-height: 45px; font-size: 14px; }
 .petit-audio { font-size: 13px; }
