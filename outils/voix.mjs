@@ -11,12 +11,23 @@ export const reglagesVoix = Object.freeze({
   modele: 'fr_FR-tom-medium',
   silencePhrase: 0.35,
   // Même rendu que les pistes d’origine : -19 LUFS, crête à -2 dBTP, MP3 mono 44,1 kHz à 128 kbit/s.
-  filtre: 'adelay=120,apad=pad_dur=0.25,loudnorm=I=-19:TP=-2:LRA=7,aresample=44100',
+  bords: 'adelay=120,apad=pad_dur=0.25',
+  volume: 'I=-19:TP=-2:LRA=7',
 });
 
 function executer(commande, args, entree) {
   const resultat = spawnSync(commande, args, { input: entree, encoding: 'utf8' });
   if (resultat.status !== 0) throw new Error(`${commande} ${args.join(' ')}\n${resultat.stderr || resultat.error}`);
+  return resultat.stderr;
+}
+
+// Normalisation en deux passes : la première mesure le volume, la seconde l’applique sans pompage.
+function normaliser(wav, sortie) {
+  const { bords, volume } = reglagesVoix;
+  const mesure = executer('ffmpeg', ['-hide_banner', '-i', wav, '-af', `${bords},loudnorm=${volume}:print_format=json`, '-f', 'null', '-']);
+  const m = JSON.parse(mesure.slice(mesure.lastIndexOf('{')));
+  const filtre = `${bords},loudnorm=${volume}:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true,aresample=44100`;
+  executer('ffmpeg', ['-v', 'error', '-y', '-i', wav, '-af', filtre, '-ac', '1', '-codec:a', 'libmp3lame', '-b:a', '128k', sortie]);
 }
 
 export function genererPhrase(texte, sortie, modele = process.env.VOIX_MODELE ?? `outils/voix/${reglagesVoix.modele}.onnx`) {
@@ -26,7 +37,7 @@ export function genererPhrase(texte, sortie, modele = process.env.VOIX_MODELE ??
   try {
     const wav = join(dossier, 'phrase.wav');
     executer(commande, [...prefixe, '-m', modele, '-f', wav, '--sentence-silence', String(reglagesVoix.silencePhrase)], texte);
-    executer('ffmpeg', ['-v', 'error', '-y', '-i', wav, '-af', reglagesVoix.filtre, '-ac', '1', '-codec:a', 'libmp3lame', '-b:a', '128k', sortie]);
+    normaliser(wav, sortie);
   } finally {
     rmSync(dossier, { recursive: true, force: true });
   }
