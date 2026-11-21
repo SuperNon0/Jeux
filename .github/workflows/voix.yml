@@ -3,8 +3,8 @@ name: Voix du narrateur
 # Crée les MP3 manquants avec la voix « Tom » de Piper dès qu’une phrase est ajoutée au catalogue.
 on:
   push:
-    branches: [main]
-    paths: ['public/annonces.json', 'outils/voix.mjs', '.github/workflows/voix.yml']
+    branches: [main, 'claude/**']
+    paths: ['public/annonces.json', 'outils/essai.txt', 'outils/voix.mjs', '.github/workflows/voix.yml']
   workflow_dispatch:
     inputs:
       essai:
@@ -41,16 +41,17 @@ jobs:
         run: test -f outils/voix/fr_FR-tom-medium.onnx || python -m piper.download_voices fr_FR-tom-medium --download-dir outils/voix
       - name: Générer
         env:
-          ESSAI: ${{ inputs.essai }}
+          ESSAI_MANUEL: ${{ inputs.essai }}
           FORCER: ${{ inputs.forcer }}
         run: |
-          if [ -n "$ESSAI" ]; then
-            mkdir -p outils/essais && node outils/voix.mjs --essai "$ESSAI" outils/essais/essai.mp3
-          elif [ -n "$FORCER" ]; then
-            node outils/voix.mjs --forcer "$FORCER"
-          else
-            node outils/voix.mjs
+          # Phrase d’essai : formulaire GitHub ou fichier outils/essai.txt, générée seulement quand elle change.
+          TEXTE="${ESSAI_MANUEL:-$(cat outils/essai.txt 2>/dev/null)}"
+          if [ -n "$TEXTE" ] && [ "$TEXTE" != "$(cat outils/essais/essai.txt 2>/dev/null)" ]; then
+            mkdir -p outils/essais
+            node outils/voix.mjs --essai "$TEXTE" outils/essais/essai.mp3
+            printf '%s\n' "$TEXTE" > outils/essais/essai.txt
           fi
+          node outils/voix.mjs ${FORCER:+--forcer "$FORCER"}
       - name: Enregistrer les MP3
         run: |
           git add public/audio outils/essais 2>/dev/null || true
