@@ -99,11 +99,14 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 ## Lancer une partie
 
 - L’hôte choisit une composition prête à jouer ou règle les rôles à la main. Les compositions favorites sont gardées sur le navigateur.
-- Le compteur de partie affiche le temps écoulé hors pauses. Sur une nouvelle partie, les durées par défaut sont de 2 minutes pour le débat et de 1 minute pour le vote. La démo utilise 1 minute et 45 secondes. Tu peux régler ces durées dans le formulaire du salon.
-- Si la narration est active, le compte à rebours commence à la fin de l’annonce de la phase. L’animateur peut aussi lancer le chrono immédiatement. Si l’annonce ne se termine pas, le serveur lance le chrono au plus tard après 90 secondes. Le débat peut être prolongé de 30 secondes. À la fin du vote, les bulletins manquants deviennent des abstentions.
+- Le formulaire règle les chronomètres en minutes. Par défaut, le débat dure 2 minutes, les votes et chaque choix de rôle 1 minute. Dans la démo, le débat dure 1 minute et le vote 0,75 minute. Indique 0 pour désactiver un chronomètre.
+- Le son est requis au lancement. Le téléphone de l’hôte joue les annonces et les autres écrans affichent le texte de l’annonce en cours. Les commandes et leur minuteur apparaissent après cette annonce. Si la lecture est interrompue, l’hôte réactive le son pour reprendre.
+- À la fin du délai, les bulletins manquants deviennent des abstentions. Un rôle individuel sans réponse passe son tour. Si le maire laisse expirer un départage, le jeu tire au sort parmi les personnes à égalité. Le débat peut être prolongé de 30 secondes.
 - L’hôte et le co-hôte peuvent mettre le jeu en pause et passer les actions des personnes hors ligne après 15 secondes.
 - Quand le salon est plein, l’hôte peut activer la narration sur son téléphone puis lancer la partie.
-- L’hôte clique sur **Tirer les cartes**. Une animation joue sur les téléphones, puis chaque carte s’ouvre en grand, face cachée. Chaque joueur retourne la sienne puis confirme **Je suis prêt**. L’hôte lance la première nuit une fois que tous les joueurs ont confirmé.
+- Avant le tirage, **Ajouter un bot** permet à l’hôte de remplir les places libres. Ouvre deux écrans et ajoute trois bots pour essayer une composition de cinq joueurs.
+- L’hôte clique sur **Tirer les cartes**. Chaque joueur retourne sa carte et confirme **Je suis prêt**. L’hôte lance alors la partie, active le son et attend la fin du compte à rebours de 10 secondes.
+- La Voyante choisit une cible, consulte sa carte en privé, puis confirme **J’ai vu la carte** avant l’annonce de fin de tour.
 - L’élection du maire est activée par défaut dans le formulaire. Elle a lieu après le premier débat et avant le vote d’élimination.
 - Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Le résultat s’affiche et l’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
@@ -135,14 +138,16 @@ Une pause de 2 secondes sépare les annonces. Le mode discret joue les transitio
 
 ### Pistes fournies
 
-Les 42 annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
+Les 44 annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
 
 | Nom du fichier | Phrase ou son |
 | --- | --- |
 | `amoureux-lies.mp3` | Les amoureux découvrent leur lien sur leur téléphone. |
+| `ancien-survit.mp3` | L’Ancien a survécu à la morsure des loups. |
 | `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
 | `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
 | `chasseur.mp3` | Le Chasseur a été éliminé. Il doit choisir une personne à emporter avec lui. |
+| `compte-a-rebours.mp3` | La partie commence dans dix secondes. |
 | `corbeau.mp3` | Le Corbeau se réveille. Choisis la personne qui recevra deux voix contre elle au prochain vote d’élimination. |
 | `cri-corbeau.mp3` | Croassement après la validation de la cible du Corbeau, en narration classique. |
 | `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |

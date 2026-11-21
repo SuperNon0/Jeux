@@ -19,11 +19,12 @@ const roles = {
   ancien: { nom: 'Ancien', camp: 'Village', pouvoir: 'Tu survis à la première attaque des loups qui te touche. Le poison et le vote peuvent t’éliminer dès la première fois.' },
   corbeau: { nom: 'Corbeau', camp: 'Village', pouvoir: 'Chaque nuit, désigne une autre personne. Elle reçoit deux voix contre elle au premier tour du prochain vote d’élimination si elle survit à la nuit.' },
 };
-const rolesOptionnels = ['voyante', 'sorciere', 'chasseur', 'cupidon', 'salvateur', 'ancien', 'corbeau'];
-const nouveauxRoles = rolesOptionnels.slice(3);
+const rolesClassiques = ['voyante', 'sorciere', 'chasseur'];
+const rolesOptionnels = [...rolesClassiques, 'cupidon', 'salvateur', 'ancien', 'corbeau'];
 const phases = {
   distribution: ['Distribution', 'Découvre ton rôle', 'Retourne ta carte à l’abri des regards, puis indique que tu es prêt.', 'layers'],
   lancement: ['Distribution', 'Tout le monde est prêt', 'L’hôte lance la partie quand la table est prête.', 'play'],
+  compteARebours: ['Distribution', 'La partie commence', 'Le compte à rebours est partagé sur tous les téléphones.', 'clock'],
   nuit: ['Nuit', 'Le village dort', 'Les personnes appelées agissent sur leur téléphone. La suite s’affichera ici.', 'moon'],
   cupidon: ['Nuit', 'Forme un couple', roles.cupidon.pouvoir, 'heart'],
   voyante: ['Nuit', 'Découvre un rôle', 'Touche un joueur pour révéler sa carte. Tu pourras la revoir dans ton journal privé.', 'eye'],
@@ -230,6 +231,9 @@ function pisteSuivante() {
   lecture = true;
   reglerVolume(lecteur, configurationSon.volume);
   lecteur.src = fichier ? `/audio/${encodeURIComponent(fichier)}` : silence;
+  lecteur.onplaying = () => {
+    if (id === piste && lecture && annonce) signalerAnnonce(true);
+  };
   lecteur.onended = () => terminer();
   lecteur.onerror = () => terminer(true);
   reprendrePiste = () => lecteur.play().catch(erreurLecture => {
@@ -249,11 +253,21 @@ function pisteSuivante() {
     lecture = false;
     reprendrePiste = null;
     if (echec && fichier) afficherAvis(`Annonce indisponible : ${fichier}`, 4000);
-    if (fichier && !echec) prochainSon = performance.now() + delaiEntreAnnonces;
-    if (annonce && annonce.partieId === etat?.partie?.id && annonce.id === etat.partie.temps?.annonce) {
-      api('chronometre', { annonce: annonce.id, partieId: annonce.partieId }).catch(() => {});
+    if (echec && fichier && etat?.partie?.narrationObligatoire) {
+      son = false;
+      stopperNarration();
+      declarerNarration(false);
+      return;
     }
+    if (fichier && !echec) prochainSon = performance.now() + delaiEntreAnnonces;
+    if (annonce) signalerAnnonce(false);
     pisteSuivante();
+  }
+
+  function signalerAnnonce(lecture) {
+    if (annonce.partieId === etat?.partie?.id) {
+      declarationNarration.then(() => api('chronometre', { annonce: annonce.id, partieId: annonce.partieId, lecture })).catch(() => {});
+    }
   }
 }
 
@@ -287,6 +301,10 @@ function actualiser(nouveau) {
   const revelation = precedente && precedente.id === partie?.id && partie.historique.length > precedente.historique.length
     ? partie.historique.at(-1) : null;
   etat = nouveau;
+  if (nouveau.hote && partie?.pause === 'son' && precedente?.pause !== 'son' && son) {
+    son = false;
+    stopperNarration();
+  }
   if (son && nouveau.hote) {
     file.push(...annoncesSonores(partie, dernierSon));
     if (partie?.pause) {
@@ -295,7 +313,7 @@ function actualiser(nouveau) {
     else pisteSuivante();
   }
   const maire = precedente?.id === partie?.id && recentes.findLast(a => ['maire-elu', 'nouveau-maire'].includes(a.fichier));
-  if (maire && !interfaceJoueur()) {
+  if (maire && !interfaceJoueur() && !partie?.attendAnnonce) {
     nomination.querySelector('span').textContent = maire.message;
     nomination.hidden = false;
     clearTimeout(minuterieMaire);
@@ -469,10 +487,12 @@ function mesSalons() {
 function ligneJoueur(j, p) {
   const vivant = !p || p.vivants.includes(j.id);
   const role = p?.bilan?.[j.id];
+  const actionBot = j.bot && !p && etat.hote ? action('<span class="sr">Retirer le bot</span>', 'x', 'retirer-bot', 'ico gh',
+    `aria-label="Retirer ${echapper(j.nom)}" data-id="${j.id}"`) : '';
   return `<li class="joueur ${vivant ? '' : 'elimine'}"><span class="avatar">${echapper(initiales(j.nom))}</span>
     <div><strong>${echapper(j.nom)}${j.id === etat.joueur ? ' <small>· Toi</small>' : ''}</strong>
-    <small class="muted">${[j.id === etat.hoteId ? 'Hôte' : j.id === etat.cohoteId ? 'Co-hôte' : '', role ? roles[role].nom : vivant ? j.enLigne ? 'En ligne' : 'Hors ligne' : 'Éliminé'].filter(Boolean).join(' · ')}</small></div>
-    ${p?.maire === j.id ? medaille : `<span class="point ${j.enLigne && vivant ? 'connecte' : ''}" aria-hidden="true"></span>`}</li>`;
+    <small class="muted">${[j.id === etat.hoteId ? 'Hôte' : j.id === etat.cohoteId ? 'Co-hôte' : '', role ? roles[role].nom : vivant ? j.bot ? 'Joueur simulé' : j.enLigne ? 'En ligne' : 'Hors ligne' : 'Éliminé'].filter(Boolean).join(' · ')}</small></div>
+    ${actionBot || (p?.maire === j.id ? medaille : `<span class="point ${j.enLigne && vivant ? 'connecte' : ''}" aria-hidden="true"></span>`)}</li>`;
 }
 
 function panneauJoueurs(p) {
@@ -514,6 +534,7 @@ function salon() {
       </section>`;
   }
   const complet = etat.joueurs.length === etat.total && etat.joueurs.every(j => j.enLigne);
+  const aDesInvites = etat.joueurs.some(j => !j.bot && j.id !== etat.hoteId);
   return `${entetePage('Salon', etat.hote ? 'Invite les joueurs, puis lance la partie.' : 'La partie démarre quand l’hôte est prêt.',
       action('Quitter l’écran', 'logout', 'sortir', 'gh'))}
     <div class="grille-partie grille-salon">
@@ -521,7 +542,8 @@ function salon() {
       <section class="panneau commandes-salon panneau-lancer">
          <div><h2 class="ttl">Distribution des cartes</h2><p class="soft">${!complet ? 'Toutes les places doivent être occupées et en ligne.' : etat.hote ? 'Tout le monde est là.' : 'En attente de l’hôte.'}</p></div>
          ${etat.hote ? `<div class="actions">${boutonSon()}${action('Tirer les cartes', 'layers', 'lancer', 'pri', complet ? '' : 'disabled')}
-           ${etat.joueurs.length > 1 ? action('Co-hôte', 'users', 'cohote', 'gh') : ''}</div>` : ''}
+           ${etat.joueurs.length < etat.total ? action('Ajouter un bot', 'plus', 'ajouter-bot', 'gh') : ''}
+           ${aDesInvites ? action('Co-hôte', 'users', 'cohote', 'gh') : ''}</div>` : ''}
       </section>
       ${panneauJoueurs()}
       <section class="panneau panneau-composition"><h2 class="ttl">Composition</h2><div class="composition">${Object.entries(etat.config.composition)
@@ -533,7 +555,7 @@ function salon() {
 const jourPhases = new Set(['debat', 'election', 'egaliteElection', 'vote', 'attenteNuit', 'departage', 'egaliteVote', 'succession', 'chasseur']);
 
 function etapes(p) {
-  const phase = ['distribution', 'lancement'].includes(p.phase) ? 'carte' : p.phase === 'fin' ? 'fin' : jourPhases.has(p.phase) ? 'jour' : 'nuit';
+  const phase = ['distribution', 'lancement', 'compteARebours'].includes(p.phase) ? 'carte' : p.phase === 'fin' ? 'fin' : jourPhases.has(p.phase) ? 'jour' : 'nuit';
   return `<ol class="etapes" aria-label="Phase de jeu">${[
     ['carte', 'layers', 'Cartes'], ['nuit', 'moon', 'Nuit'], ['jour', 'sun', 'Jour'], ['fin', 'star', 'Résultat'],
   ].map(([id, ic, titre]) => `<li ${id === phase ? 'aria-current="step"' : ''}>${icone(ic, 18)}${titre}</li>`).join('')}</ol>`;
@@ -603,7 +625,7 @@ function commandes(p) {
     return action('Voir ma carte', 'eye', 'ouvrir-carte', 'pri');
   }
   if (p.phase === 'lancement') return agir('Lancer la partie', 'play');
-  if (p.phase === 'voyante') return ciblesVoyante(p);
+  if (p.phase === 'voyante') return p.action.revelationAttendue ? boutonRevelation(p) : ciblesVoyante(p);
   if (p.phase === 'cupidon') return choixCupidon(p);
   if (p.phase === 'debat') return agir('Ouvrir le vote', 'arrow');
   if (p.phase === 'attenteNuit') return agir('Confirmer et lancer la nuit', 'moon');
@@ -655,6 +677,29 @@ function carte(p) {
 }
 
 function vuePhase(p) {
+  if (p.pause === 'son') {
+    return `<section class="panneau phase phase-annonce">
+      <div class="phase-entete"><span class="embleme">${icone('bell', 24)}</span>
+      <h2 class="ttl">En attente du son de l’hôte</h2></div>
+      ${etat.hote ? boutonSon() : ''}
+    </section>`;
+  }
+  if (p.attendAnnonce) {
+    return `<section class="panneau phase phase-annonce">
+      <div class="phase-entete"><span class="embleme">${icone(p.pause ? 'clock' : 'bell', 24)}</span><div>
+        <span class="lbl-mono">Narration</span><h2 class="ttl" aria-live="polite">${echapper(p.sousTitre || 'En attente de l’annonce')}</h2>
+      </div></div>
+      ${p.pause ? '<p class="notice">Partie en pause</p>' : ''}
+      ${etat.anime ? `<div class="actions">${action(p.pause ? 'Reprendre' : 'Mettre en pause',
+        p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}</div>` : ''}
+    </section>`;
+  }
+  if (p.phase === 'compteARebours') {
+    return `<section class="panneau phase compte-lancement">
+      <h2 class="ttl">La partie commence</h2><time class="mono" data-temps role="timer">0:10</time>
+      ${p.pause ? `<p>Partie en pause</p>${etat.anime ? action('Reprendre', 'play', 'reprendre', 'gh') : ''}` : ''}
+    </section>`;
+  }
   if (p.phase === 'fin') {
     const victoire = { village: 'Le village l’emporte', loups: 'La meute l’emporte',
       amoureux: 'Les amoureux l’emportent', egalite: 'Aucun camp ne survit' }[p.gagnant];
@@ -669,12 +714,16 @@ function vuePhase(p) {
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
     p.phase === 'vote' ? ['maire-elu', 'nouveau-maire'].includes(a.fichier) :
     p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination'].includes(a.fichier) : false));
+  const ancien = p.phase === 'debat'
+    ? p.annonces.slice(p.annonces.findLastIndex(a => a.fichier === 'le-village-se-reveille')).find(a => a.fichier === 'ancien-survit')
+    : null;
   const animateurPresent = etat.joueurs.some(j => j.enLigne && [etat.hoteId, etat.cohoteId].includes(j.id));
   return `<section class="panneau phase">
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
       <span class="lbl-mono">${label}</span><h2 class="ttl">${titre} ${aide('phase', titre, texte)}</h2></div>
     </div>
     ${derniere && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(derniere.message)}</div>` : ''}
+    ${ancien ? `<div class="notice">${icone('shield', 16)}${echapper(ancien.message)}</div>` : ''}
     ${p.marqueCorbeau && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(etiquette(p.marqueCorbeau))} reçoit deux voix au premier vote d’élimination.</div>` : ''}
     ${lienAmoureux(p)}
     ${progression ? `<div class="progression"><div><span>${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}</span>
@@ -683,22 +732,22 @@ function vuePhase(p) {
     ${p.pause ? `<p class="notice">${icone('clock', 18)}Partie en pause</p>` : ''}
     ${!animateurPresent ? `<p class="notice avertissement">${icone('alert', 18)}Le salon attend un animateur.</p>` : ''}
     ${commandes(p)}
-    ${boutonRevelation(p)}
+    ${p.action?.revelationAttendue ? '' : boutonRevelation(p)}
     ${p.phase === 'distribution' && etat.hote ? boutonSon() : ''}
     ${etat.anime ? `<div class="actions commandes-phase">
       ${action(p.pause ? 'Reprendre' : 'Mettre en pause', p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}
-      ${p.temps?.attente && !p.pause ? action('Démarrer le chrono', 'play', 'chronometre', 'gh') : ''}
       ${p.peutProlonger ? action('+30 s de débat', 'plus', 'prolonger', 'gh') : ''}
       ${p.peutPasser ? action('Passer les absents', 'chev', 'passer', 'gh') + aide('absents', 'Actions des absents', 'Après 15 secondes, tu peux passer les actions des personnes hors ligne. Leurs votes manquants comptent comme des abstentions.') : ''}
     </div>` : ''}</section>`;
 }
 
 function chronos(p) {
-  if (['distribution', 'lancement'].includes(p.phase)) return '';
-  const label = p.phase === 'debat' ? 'Temps de parole' : p.phase === 'election' ? 'Élection' : p.phase === 'vote' ? 'Temps de vote' : '';
+  if (['distribution', 'lancement', 'compteARebours'].includes(p.phase)) return '';
+  const label = p.phase === 'debat' ? 'Temps de parole' : p.phase === 'election' ? 'Élection' : p.phase === 'vote' ? 'Temps de vote'
+    : p.temps?.choix ? 'Temps de choix' : '';
   return `<div class="chronos" aria-label="Chronomètres">
     <div class="chrono">${icone('clock', 18)}<span>Partie</span><time class="mono" data-temps-total role="timer">0:00</time></div>
-    ${label ? `<div class="chrono chrono-phase">${icone(p.phase === 'debat' ? 'chat' : 'list', 18)}<span>${label}</span>
+    ${label && !p.attendAnnonce ? `<div class="chrono chrono-phase">${icone(p.phase === 'debat' ? 'chat' : p.temps?.choix ? 'hourglass' : 'list', 18)}<span>${label}</span>
        <time class="mono" data-temps role="timer">${p.temps?.attente ? 'Après l’annonce' : p.temps ? '–' : 'Sans limite'}</time></div>` : ''}
   </div>`;
 }
@@ -717,7 +766,7 @@ function partie() {
     return `${entetePage(zones[zone][0], p.jour ? `Tour ${p.jour}` : '')}
       ${chronos(p)}
       <div class="pile joueur-partie">${contenu}
-      ${zone === 'partie' && p.phase !== 'distribution' ? `<details class="panneau" id="joueurs-repliables" ${p.phase === 'fin' ? 'open' : ''}>
+      ${zone === 'partie' && !p.attendAnnonce && !['distribution', 'compteARebours'].includes(p.phase) ? `<details class="panneau" id="joueurs-repliables" ${p.phase === 'fin' ? 'open' : ''}>
         <summary>${p.phase === 'fin' ? 'Résultat et rôles' : 'Joueurs'} ${icone('chevd', 16)}</summary>${panneauJoueurs(p)}</details>` : ''}
       </div>`;
   }
@@ -725,11 +774,11 @@ function partie() {
       `${etat.demo ? 'Quatre joueurs simulés' : `Salon <span class="mono">${code}</span>`}${p.jour ? ` · Tour ${p.jour}` : ''}`,
       action('Options du salon', 'dots', 'plus', 'gh'))}
     ${chronos(p)}
-    ${etapes(p)}
+    ${p.attendAnnonce ? '' : etapes(p)}
     <div class="grille-partie"><div class="pile">
       ${contenu}
-    </div><div class="pile">${panneauJoueurs(p)}
-      ${etat.hote && (p.phase !== 'distribution' || zone !== 'partie') ? `<section class="panneau commandes-salon"><div><h2 class="ttl">Narration ${aide('narration', 'Narration', 'Active le son sur un téléphone pour que les annonces soient diffusées à toute la table.')}</h2></div>${boutonSon()}</section>` : ''}
+    </div><div class="pile">${p.attendAnnonce ? '' : panneauJoueurs(p)}
+      ${etat.hote && p.pause !== 'son' && (p.phase !== 'distribution' || zone !== 'partie') ? `<section class="panneau commandes-salon"><div><h2 class="ttl">Narration ${aide('narration', 'Narration', 'Les annonces sont diffusées sur le téléphone de l’hôte.')}</h2></div>${boutonSon()}</section>` : ''}
     </div></div>`;
 }
 
@@ -896,55 +945,81 @@ function afficher() {
   }
 }
 
+const dureesSalon = [
+  { champ: 'debatMinutes', cle: 'debatSecondes', libelle: 'Débat', defaut: 120 },
+  { champ: 'voteMinutes', cle: 'voteSecondes', libelle: 'Votes', defaut: 60 },
+  { champ: 'roleMinutes', cle: 'roleSecondes', libelle: 'Choix des rôles', defaut: 60 },
+];
+const minutesSalon = secondes => Number((Number(secondes) / 60).toFixed(6));
+
+function sectionCreation(titre, picto, contenu) {
+  return `<details class="avances creation-section"><summary>
+    <span class="creation-picto">${icone(picto, 17)}</span><span>${titre}</span>${icone('chevd', 16)}
+  </summary><div class="creation-corps">${contenu}</div></details>`;
+}
+
 const formCreation = () => `<form data-form="creer">
-  ${pseudo}
-  <label class="champ-jeu">Nombre de joueurs <select name="total">${Array.from({ length: 12 }, (_, i) => i + 5)
-    .map(n => `<option value="${n}" ${n === 6 ? 'selected' : ''}>${n} joueurs</option>`).join('')}</select></label>
-  <label class="champ-jeu">Composition rapide<select name="preset">${optionsComposition()}</select></label>
-  <fieldset class="modes"><legend>Type de partie ${aide('modes', 'Type de partie', 'Initiation utilise la Voyante, les loups et les villageois. Classique ajoute les potions et le tir du Chasseur.')}</legend>
-    <label><input type="radio" name="mode" value="classique" checked><span><strong>Classique</strong><small>Voyante, potions et dernier tir.</small></span></label>
-    <label><input type="radio" name="mode" value="express"><span><strong>Initiation</strong><small>Villageois, Voyante et loups.</small></span></label>
-  </fieldset>
-  <div class="ligne-option"><label class="case"><input type="checkbox" name="maire" checked>Élection du maire</label>
-    ${aide('creation-maire', 'Élection du maire', 'Le village élit son maire à la fin du premier débat. Sa voix compte double lors des votes d’élimination et il tranche les égalités.')}</div>
-  <details class="avances"><summary>Personnaliser les règles ${icone('chevd', 16)}</summary>
-    <div class="options">
-      <label class="case"><input type="checkbox" name="discret">Appels de nuit discrets</label>
-      <div class="options-roles">
-        <label class="champ-jeu">Loups-Garous<input type="number" name="loups" min="1" max="2" value="1" required></label>
-        <div class="options">${rolesOptionnels.map(id =>
-          `<div class="ligne-option"><label class="case"><input type="checkbox" name="${id}" ${nouveauxRoles.includes(id) ? '' : 'checked'}>${roles[id].nom}</label>
-          ${aide(`composition-${id}`, roles[id].nom, roles[id].pouvoir)}</div>`).join('')}</div>
-      </div>
-      <label class="champ-jeu">Ordre de nuit<select name="ordre">
-        <option value="voyante,loups,sorciere">Voyante → Loups → Sorcière</option>
-        <option value="loups,voyante,sorciere">Loups → Voyante → Sorcière</option>
-        <option value="loups,sorciere,voyante">Loups → Sorcière → Voyante</option>
-      </select></label>
-    </div></details>
-  <details class="avances"><summary>Chronomètres ${icone('chevd', 16)}</summary>
-    <div class="options options-roles">
-      <label class="champ-jeu">Débat (s)<input name="debatSecondes" type="number" min="0" max="900" value="120" required></label>
-      <label class="champ-jeu">Vote (s)<input name="voteSecondes" type="number" min="0" max="900" value="60" required></label>
-    </div>${aide('chronos', 'Chronomètres', 'Entre 15 et 900 secondes, ou 0 pour désactiver. À la fin du vote, les bulletins manquants deviennent des abstentions.')}</details>
-  <p class="composition-prevision soft" id="projection"></p>
-  ${enHote ? `<details class="avances"><summary>Compositions partagées ${icone('chevd', 16)}</summary>
-    <div class="options"><input type="hidden" name="compositionId">
-      <label class="champ-jeu">Nom de la composition partagée<input name="nomPartage" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
-      <div class="actions">${action('Enregistrer une composition', 'plus', 'enregistrer-composition', 'gh')}
-        ${action('Mettre à jour la composition', 'check', 'enregistrer-composition', 'gh', 'data-modifier disabled')}</div>
-    </div></details>` : ''}
-  <details class="avances"><summary>Mes favoris ${icone('chevd', 16)}</summary>
-    <div class="actions"><label class="champ-jeu">Nom de la composition<input name="favori" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
-    ${action('Enregistrer', 'star', 'favori', 'gh')}</div></details>
-  <button class="btn pri" data-envoi>${icone('plus', 18)}Créer le salon</button>
+  <div class="creation-contenu">
+    <div class="creation-identite">
+      ${pseudo}
+      <label class="champ-jeu">Nombre de joueurs <select name="total">${Array.from({ length: 12 }, (_, i) => i + 5)
+        .map(n => `<option value="${n}" ${n === 6 ? 'selected' : ''}>${n} joueurs</option>`).join('')}</select></label>
+    </div>
+    <label class="champ-jeu">Composition rapide<select name="preset">${optionsComposition()}</select></label>
+    <div class="ligne-option creation-maire"><span class="creation-picto">${icone('star', 17)}</span>
+      <label class="case"><input type="checkbox" name="maire" checked>Élection du maire</label>
+      ${aide('creation-maire', 'Élection du maire', 'Le village élit son maire à la fin du premier débat. Sa voix compte double lors des votes d’élimination et il tranche les égalités.')}</div>
+    <div class="creation-sections">
+      ${sectionCreation('Personnaliser les règles', 'layers', `
+        <div class="creation-nuit">
+          <label class="champ-jeu">Loups-Garous<input type="number" name="loups" min="1" max="2" value="1" required></label>
+          <div class="ligne-option"><label class="case"><input type="checkbox" name="discret">Appels de nuit discrets</label>
+            ${aide('creation-discret', 'Appels de nuit discrets', 'Les consignes des rôles restent visibles sur les téléphones. La narration joue les transitions communes.')}</div>
+        </div>
+        <fieldset class="creation-roles">
+          <legend>Rôles spéciaux</legend>
+          ${rolesOptionnels.map(id => `<div class="role-composition">
+            <label class="role-composition-choix">${art(id)}
+              <input type="checkbox" name="${id}" ${rolesClassiques.includes(id) ? 'checked' : ''}>
+              <span class="role-composition-nom">${roles[id].nom}</span>
+            </label>
+            ${aide(`composition-${id}`, roles[id].nom, roles[id].pouvoir)}
+          </div>`).join('')}
+        </fieldset>
+        <div class="creation-ordre">
+          <label class="champ-jeu">Ordre de nuit<select name="ordre" aria-describedby="ordre-actif">
+            <option value="voyante,loups,sorciere">Ordre classique</option>
+            <option value="loups,voyante,sorciere">Loups avant la Voyante</option>
+            <option value="loups,sorciere,voyante">Voyante après la Sorcière</option>
+          </select></label>
+          <ol id="ordre-actif" class="ordre-actif" aria-label="Ordre de passage des rôles" aria-live="polite"></ol>
+        </div>`)}
+      ${sectionCreation('Chronomètres', 'clock', `
+        <div class="creation-temps">${dureesSalon.map(({ champ, libelle, defaut }) => `<label class="champ-jeu">
+          <span>${libelle} <small class="muted">(min)</small></span>
+          <input name="${champ}" type="number" inputmode="decimal" min="0" max="15" step="any" value="${minutesSalon(defaut)}" required>
+        </label>`).join('')}</div>
+        <div class="ligne-option"><span class="soft">0 pour désactiver un chronomètre.</span>
+          ${aide('chronos', 'Chronomètres', 'Entre 0,25 et 15 minutes, ou 0 pour désactiver. À la fin du délai, les votes manquants deviennent des abstentions. Un rôle sans réponse passe son tour. Pour un départage, le jeu tire au sort.')}</div>`)}
+      ${enHote ? sectionCreation('Compositions partagées', 'users', `<input type="hidden" name="compositionId">
+        <label class="champ-jeu">Nom de la composition partagée<input name="nomPartage" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
+        <div class="actions">${action('Enregistrer une composition', 'plus', 'enregistrer-composition', 'gh')}
+          ${action('Mettre à jour la composition', 'check', 'enregistrer-composition', 'gh', 'data-modifier disabled')}</div>`) : ''}
+      ${sectionCreation('Mes favoris', 'star', `<label class="champ-jeu">Nom de la composition<input name="favori" maxlength="35" placeholder="Ex. Partie du vendredi"></label>
+        <div class="actions">${action('Enregistrer', 'star', 'favori', 'gh')}</div>`)}
+    </div>
+  </div>
+  <div class="creation-pied">
+    <p class="composition-prevision soft" id="projection" role="status"></p>
+    <button class="btn pri" data-envoi>${icone('plus', 18)}Créer le salon</button>
+  </div>
 </form>`;
 
 const compositions = [
-  ['Petite table · 5 joueurs', 5, 1, 'express'],
-  ['Table classique · 8 joueurs', 8, 2, 'classique'],
-  ['Grande table · 12 joueurs', 12, 3, 'classique'],
-  ['Village étendu · 12 joueurs', 12, 3, 'classique', nouveauxRoles],
+  ['Petite table · 5 joueurs', 5, 1, ['voyante']],
+  ['Table classique · 8 joueurs', 8, 2, rolesClassiques],
+  ['Grande table · 12 joueurs', 12, 3, rolesClassiques],
+  ['Village étendu · 12 joueurs', 12, 3, rolesOptionnels],
 ];
 
 function optionsComposition() {
@@ -959,14 +1034,21 @@ function ordreActif(ordre, estActif) {
   return ['cupidon', ...ordre.split(',').flatMap(id => id === 'loups' ? ['salvateur', 'loups'] : [id]), 'corbeau'].filter(estActif);
 }
 
+function lireDurees(donnees) {
+  return Object.fromEntries(dureesSalon.map(({ champ, cle }) => [cle, Math.round(Number(donnees.get(champ)) * 60)]));
+}
+
+function chargerDurees(champs, reglages) {
+  for (const { champ, cle, defaut } of dureesSalon) champs[champ].value = minutesSalon(reglages[cle] ?? defaut);
+}
+
 function reglageSalon(donnees) {
   const total = Number(donnees.get('total'));
   const composition = { loups: Number(donnees.get('loups')),
     ...Object.fromEntries(rolesOptionnels.map(id => [id, Number(donnees.has(id))])) };
   composition.villageois = total - Object.values(composition).reduce((a, b) => a + b, 0);
   return { total, composition, ordre: ordreActif(donnees.get('ordre'), id => composition[id]),
-    maire: donnees.has('maire'), discret: donnees.has('discret'), debatSecondes: Number(donnees.get('debatSecondes')),
-    voteSecondes: Number(donnees.get('voteSecondes')) };
+    maire: donnees.has('maire'), discret: donnees.has('discret'), ...lireDurees(donnees) };
 }
 
 function appliquerComposition(form) {
@@ -979,24 +1061,19 @@ function appliquerComposition(form) {
     form.querySelector('[data-modifier]').disabled = true;
   }
   if (source === 'modele') {
-    const [, total, loups, mode, ajouts = []] = compositions[index];
+    const [, total, loups, actifs] = compositions[index];
     champs.total.value = total;
-    champs.mode.value = mode;
-    configurer(form, 'mode');
     champs.loups.value = loups;
-    for (const id of ajouts) champs[id].checked = true;
-    champs.preset.value = selection;
+    for (const id of rolesOptionnels) champs[id].checked = actifs.includes(id);
   } else if (source === 'partagee') {
     const preset = compositionsPartagees[index];
     if (!preset) return;
     champs.total.value = preset.total;
     champs.loups.value = preset.composition.loups;
     for (const id of rolesOptionnels) champs[id].checked = Boolean(preset.composition[id]);
-    champs.mode.value = champs.sorciere.checked || champs.chasseur.checked ? 'classique' : 'express';
     champs.maire.checked = preset.maire;
     champs.discret.checked = preset.discret;
-    champs.debatSecondes.value = preset.debatSecondes;
-    champs.voteSecondes.value = preset.voteSecondes;
+    chargerDurees(champs, preset);
     const option = [...champs.ordre.options].find(o => ordreActif(o.value, id => preset.composition[id]).join(',') === preset.ordre.join(','));
     champs.ordre.value = option?.value ?? champs.ordre.options[0].value;
     champs.compositionId.value = preset.id;
@@ -1005,7 +1082,8 @@ function appliquerComposition(form) {
   } else if (source === 'favori') {
     const choix = favoris[index]?.champs;
     if (choix) {
-      for (const nom of ['total', 'mode', 'loups', 'ordre', 'debatSecondes', 'voteSecondes']) champs[nom].value = choix[nom];
+      for (const nom of ['total', 'loups', 'ordre']) champs[nom].value = choix[nom];
+      chargerDurees(champs, choix);
       for (const nom of ['maire', 'discret', ...rolesOptionnels]) champs[nom].checked = Boolean(choix[nom]);
     }
   }
@@ -1015,7 +1093,7 @@ async function enregistrerComposition(form, modifier) {
   const champs = form.elements;
   const nom = champs.nomPartage.value.trim();
   if (!nom) throw new Error('Donne un nom à cette composition.');
-  for (const champ of [champs.loups, champs.debatSecondes, champs.voteSecondes]) {
+  for (const champ of [champs.loups, ...dureesSalon.map(({ champ }) => champs[champ])]) {
     if (!champ.reportValidity()) return;
   }
   const reglages = reglageSalon(new FormData(form));
@@ -1034,11 +1112,11 @@ function enregistrerFavori(form) {
   const champs = form.elements;
   const nom = champs.favori.value.trim();
   if (!nom) return afficherAvis('Donne un nom à cette composition.');
-  for (const nom of ['loups', 'debatSecondes', 'voteSecondes']) {
+  for (const nom of ['loups', ...dureesSalon.map(({ champ }) => champ)]) {
     if (!champs[nom].reportValidity()) return;
   }
-  const valeurs = {};
-  for (const cle of ['total', 'mode', 'loups', 'ordre', 'debatSecondes', 'voteSecondes']) valeurs[cle] = champs[cle].value;
+  const valeurs = lireDurees(new FormData(form));
+  for (const cle of ['total', 'loups', 'ordre']) valeurs[cle] = champs[cle].value;
   for (const cle of ['maire', 'discret', ...rolesOptionnels]) valeurs[cle] = champs[cle].checked;
   favoris = [{ nom, champs: valeurs }, ...favoris.filter(favori => favori.nom !== nom)].slice(0, 16);
   sauvegarde.ecrire(cleFavoris, JSON.stringify(favoris));
@@ -1049,32 +1127,29 @@ function enregistrerFavori(form) {
 
 function configurer(form, evenement) {
   const champs = form.elements;
-  const { total, loups, voyante, sorciere, chasseur, mode, ordre } = champs;
+  const { total, loups, ordre } = champs;
   if (evenement === 'preset') appliquerComposition(form);
-  if (['total', 'mode'].includes(evenement)) {
-    loups.value = Number(total.value) >= 12 ? 3 : Number(total.value) >= 8 ? 2 : 1;
-    if (evenement === 'mode') {
-      sorciere.checked = chasseur.checked = mode.value === 'classique';
-      voyante.checked = true;
-      for (const id of nouveauxRoles) champs[id].checked = false;
-    }
-  }
   const taille = Number(total.value);
+  if (evenement === 'total') loups.value = taille >= 12 ? 3 : taille >= 8 ? 2 : 1;
   const nombreLoups = Number(loups.value);
   const nombreSpeciaux = rolesOptionnels.filter(id => champs[id].checked).length;
   const villageois = taille - nombreLoups - nombreSpeciaux;
   loups.max = Math.floor((taille - 1) / 2);
-  for (const nom of ['debatSecondes', 'voteSecondes']) {
+  for (const { champ: nom } of dureesSalon) {
     const champ = form.elements[nom];
-    champ.setCustomValidity(Number(champ.value) > 0 && Number(champ.value) < 15 ? '15 secondes au minimum, ou 0.' : '');
+    champ.setCustomValidity(Number(champ.value) > 0 && Number(champ.value) < 0.25 ? '0,25 minute au minimum, ou 0.' : '');
   }
   loups.setCustomValidity(villageois < 0 ? 'Il y a plus de rôles que de joueurs.' : '');
-  for (const option of ordre.options) {
-    option.textContent = ordreActif(option.value, id => id === 'loups' || champs[id].checked).map(id => roles[id].nom).join(' → ');
-  }
-  form.querySelector('#projection').textContent = villageois >= 0
-    ? `${nombreLoups} loup${nombreLoups > 1 ? 's' : ''} · ${villageois} villageois ordinaire${villageois > 1 ? 's' : ''}`
-    : 'Réduis le nombre de rôles.';
+  if (!ordre.value) ordre.selectedIndex = 0;
+  const apercu = form.querySelector('#ordre-actif');
+  const parcours = ordreActif(ordre.value, id => id === 'loups' || champs[id].checked)
+    .map((id, index) => `<li><span class="mono" aria-hidden="true">${index + 1}</span>${roles[id].nom}</li>`).join('');
+  if (apercu.innerHTML !== parcours) apercu.innerHTML = parcours;
+  const projection = form.querySelector('#projection');
+  projection.classList.toggle('dan', villageois < 0);
+  projection.textContent = villageois >= 0
+    ? `${nombreLoups} loup${nombreLoups > 1 ? 's' : ''} · ${nombreSpeciaux} rôle${nombreSpeciaux > 1 ? 's' : ''} spécial${nombreSpeciaux > 1 ? 's' : ''} · ${villageois} villageois`
+    : `${-villageois} rôle${villageois < -1 ? 's' : ''} de trop pour ${taille} joueurs.`;
   if (evenement && evenement !== 'preset' && evenement !== 'favori') form.elements.preset.value = '';
 }
 
@@ -1101,7 +1176,7 @@ function contenuFeuille(type, contexte) {
     case 'creer': return ['Créer un salon', formCreation()];
     case 'cohote': return ['Co-hôte', `<form data-form="cohote">
       <label class="champ-jeu">Animateur délégué<select name="joueur"><option value="">Aucun co-hôte</option>
-      ${etat.joueurs.filter(j => j.id !== etat.hoteId).map(j => `<option value="${j.id}" ${j.id === etat.cohoteId ? 'selected' : ''}>${echapper(j.nom)}</option>`).join('')}</select></label>
+      ${etat.joueurs.filter(j => !j.bot && j.id !== etat.hoteId).map(j => `<option value="${j.id}" ${j.id === etat.cohoteId ? 'selected' : ''}>${echapper(j.nom)}</option>`).join('')}</select></label>
       <p class="soft">Co-hôte ${aide('choix-cohote', 'Co-hôte', 'Cette personne peut arbitrer ce salon, mettre la partie en pause, passer les absents et ouvrir le vote depuis sa place.')}</p>
       <button class="btn pri" data-envoi>${icone('check', 18)}Enregistrer</button></form>`];
     case 'rejoindre': return ['Rejoindre une partie', `<form data-form="rejoindre">
@@ -1119,6 +1194,9 @@ function contenuFeuille(type, contexte) {
       <p>Le jeu sera indisponible pendant le redémarrage. Les parties sauvegardées seront reprises à la reconnexion.</p>
       <label class="case"><input type="checkbox" name="confirme" required>Je confirme la mise à jour et le redémarrage.</label>
       <button class="btn pri" data-envoi>${icone('download', 18)}Lancer la mise à jour</button></form>`];
+    case 'son-lancement': return ['Activer le son', `<div class="pile">
+      <p>Les annonces seront diffusées sur ton appareil. Le jeu démarre après un compte à rebours de 10 secondes.</p>
+      ${action('Activer le son et lancer', 'play', 'son-lancement', 'pri', `data-numero="${contexte}"`)}</div>`];
     case 'gerer-salon': {
       const { salle, operation } = contexte;
       const supprimer = operation === 'supprimer';
@@ -1136,7 +1214,7 @@ function contenuFeuille(type, contexte) {
         ${tuile('Mes salons', 'users', 'liste')}${tuile('Apparence', 'palette', 'apparence')}
         ${tuile('Comment jouer', 'help', 'regles')}${tuile('Rechercher', 'search', 'rechercher')}</div>
         ${etat && etat.resume.statut !== 'cloturee' ? `<div class="menu-plus">${!etat.demo ? action('Inviter ou récupérer une place', 'share', 'invitation') : ''}
-        ${etat.hote && !etat.demo && etat.joueurs.length > 1 ? action('Choisir un co-hôte', 'users', 'cohote') : ''}
+        ${etat.hote && !etat.demo && etat.joueurs.some(j => !j.bot && j.id !== etat.hoteId) ? action('Choisir un co-hôte', 'users', 'cohote') : ''}
         ${action('Quitter l’écran', 'logout', 'sortir', 'gh')}</div>` : ''}`];
     }
     case 'invitation': return ['Invitation', `<p class="soft">Scanne le QR ou partage le lien. Une personne qui a perdu sa session peut demander à reprendre sa place.</p>${invitation()}`];
@@ -1146,12 +1224,15 @@ function contenuFeuille(type, contexte) {
       <button class="btn pri" data-envoi>${icone('rotate', 18)}Demander la reprise</button></form>`];
     case 'revelation': {
       const { nom, role } = contexte;
+      const partie = etat.partie;
+      const confirmation = partie.action?.revelationAttendue && partie.historique.at(-1) === contexte;
       return ['Carte révélée', `<section class="fiche-revelation">
         ${pastille('Révélation privée', 'lock')}
         <p class="soft">${echapper(nom)}</p><h3 class="ttl">${roles[role].nom}</h3>
         ${art(role)}
         <p class="soft">Camp ${roles[role].camp}</p>
-        ${action('Continuer', 'arrow', 'fermer', 'pri')}</section>`];
+        ${confirmation ? action('J’ai vu la carte', 'check', 'confirmer-revelation', 'pri', `data-numero="${partie.numero}"`)
+          : action('Continuer', 'arrow', 'fermer', 'pri')}</section>`];
     }
     case 'role': {
       const role = roles[contexte];
@@ -1169,7 +1250,9 @@ function contenuFeuille(type, contexte) {
 function afficherContenuFeuille(type, contexte) {
   const [titre, contenu] = contenuFeuille(type, contexte);
   feuille.dataset.type = type;
-  feuille.innerHTML = `<div class="grab" aria-hidden="true"></div><div class="tete-feuille"><h2 id="titre-feuille" class="ttl">${titre}</h2>
+  feuille.innerHTML = `<div class="grab" aria-hidden="true"></div><div class="tete-feuille">
+    ${type === 'creer' ? `<span class="creation-illustration" aria-hidden="true">${art('nuit')}</span>` : ''}
+    <h2 id="titre-feuille" class="ttl">${titre}</h2>
     ${action('<span class="sr">Fermer</span>', 'x', 'fermer', 'ico gh', 'aria-label="Fermer"')}</div><div class="corps-feuille"><p class="notification" data-avis role="status" hidden></p>${contenu}</div>`;
   const form = feuille.querySelector('[data-form="creer"]');
   if (form) configurer(form);
@@ -1308,6 +1391,10 @@ document.addEventListener('invalid', event => {
 }, true);
 
 document.addEventListener('input', event => {
+  if (event.target.form?.dataset.form === 'creer' && event.target.type === 'number') {
+    configurer(event.target.form, event.target.name);
+    return;
+  }
   if (event.target.name !== 'volume' || event.target.form?.dataset.form !== 'son') return;
   event.target.form.querySelector('[data-volume]').textContent = `${event.target.value} %`;
   const apercu = event.target.form.querySelector('[data-lecteur-son]');
@@ -1517,6 +1604,11 @@ document.addEventListener('click', event => {
     afficher();
     return;
   }
+  if (id === 'agir' && etat?.hote && etat.partie?.phase === 'lancement' && etat.partie.narrationObligatoire &&
+      (!son || !etat.partie.narrationActive)) {
+    ouvrirFeuille('son-lancement', Number(cible.dataset.numero));
+    return;
+  }
   if (id === 'oublier') {
     delete connus[cible.dataset.code];
     sauvegarde.oublier(cleSession(cible.dataset.code));
@@ -1525,6 +1617,26 @@ document.addEventListener('click', event => {
     return;
   }
   executer(cible, async () => {
+    if (id === 'son-lancement' && etat?.hote) {
+      stopperNarration();
+      lecteur.onplaying = lecteur.onended = lecteur.onerror = null;
+      lecteur.src = silence;
+      try { await lecteur.play(); }
+      catch { son = false; throw new Error('Le navigateur bloque le son. Appuie à nouveau pour réessayer.'); }
+      son = true;
+      await declarationNarration;
+      await api('narration', { active: true });
+      const resultat = await api('agir', { numero: Number(cible.dataset.numero), choix: null });
+      fermerFeuille();
+      actualiser(resultat);
+      return;
+    }
+    if (id === 'confirmer-revelation') {
+      const resultat = await api('agir', { numero: Number(cible.dataset.numero), choix: 'confirmer' });
+      fermerFeuille();
+      actualiser(resultat);
+      return;
+    }
     if (id === 'demo' && enHote) {
       const session = await requete('/api/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       fermerFeuille(false);
@@ -1540,11 +1652,6 @@ document.addEventListener('click', event => {
       reglerVolume(lecteurTest, Number(form.elements.volume.value));
       lecteurTest.hidden = false;
       await lecteurTest.play();
-      return;
-    }
-    if (id === 'chronometre') {
-      await api('chronometre', { partieId: etat.partie.id, phase: etat.partie.temps?.phase });
-      actualiser(await api('etat', {}));
       return;
     }
     if (['pause', 'reprendre', 'passer', 'prolonger'].includes(id)) {
@@ -1566,6 +1673,11 @@ document.addEventListener('click', event => {
       }
       return;
     }
+    if (id === 'agir' || id === 'lancer') await declarationNarration;
+    if (id === 'ajouter-bot' || id === 'retirer-bot') {
+      actualiser(await api(id === 'ajouter-bot' ? 'ajouterbot' : 'retirerbot', { joueur: cible.dataset.id }));
+      return;
+    }
     if (id === 'agir') actualiser(await api('agir', { numero: Number(cible.dataset.numero), choix: cible.dataset.choix ?? null }));
     if (id === 'decision') actualiser(await api('decision', { id: cible.dataset.id, accepte: cible.dataset.accepte === 'oui' }));
     if (id === 'lancer' || id === 'retour') actualiser(await api(id, {}));
@@ -1576,7 +1688,10 @@ afficher();
 synchroniser();
 actualiserListe();
 if (zone === 'admin') chargerAdmin();
-setInterval(actualiserCompteur, 250);
+setInterval(() => {
+  actualiserCompteur();
+  if (!document.hidden && etat?.partie?.attendAnnonce) synchroniser();
+}, 250);
 setInterval(() => {
   if (document.hidden) return;
   synchroniser();

@@ -13,6 +13,7 @@ const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.ur
 const acces = configurerAcces(process.env);
 const executerFichier = promisify(execFile);
 const audioInclus = new URL('./public/audio/', import.meta.url);
+const sousTitres = JSON.parse(readFileSync(new URL('./public/annonces.json', import.meta.url), 'utf8'));
 const etatLocal = process.env.JEUX_ETAT ? resolve(process.env.JEUX_ETAT) : null;
 const dossierDonnees = etatLocal && resolve(etatLocal, 'donnees');
 const fichierDonnees = dossierDonnees && resolve(dossierDonnees, 'etat.json');
@@ -76,6 +77,7 @@ async function modeAcces(req) {
 const salons = new Map();
 const presenceValide = 15_000;
 const dureeDebatDemo = 60;
+const dureeRoleDefaut = 60;
 const dureeReprise = 10 * 60_000;
 const annoncesDisponibles = (await readdir(audioInclus))
   .filter(nom => nomAudio.test(nom)).sort().map(nom => nom.slice(0, -4));
@@ -113,6 +115,7 @@ function charger() {
   compositions = archive.compositions ?? compositions;
   for (const { sessions, demandes, partie, ...entree } of archive.salons) {
     entree.config.narration = false;
+    entree.config.roleSecondes ??= dureeRoleDefaut;
     if (entree.demo) {
       entree.config.maire = true;
       if (!entree.config.debatSecondes) entree.config.debatSecondes = dureeDebatDemo;
@@ -127,29 +130,44 @@ function charger() {
   }
 }
 
+const estBot = (salon, id) => salon.bots?.includes(id) === true;
+
 function enLigne(salon, id, maintenant = Date.now()) {
-  return salon.bots?.includes(id) || maintenant - (salon.presence.get(id) ?? 0) < presenceValide;
+  return estBot(salon, id) || maintenant - (salon.presence.get(id) ?? 0) < presenceValide;
+}
+
+function choixDuBot(salon, bot, type, cibles) {
+  if (type === 'voyante' && salon.partie.tour.revelationAttendue) return 'confirmer';
+  if (type === 'sorciere') return { soin: false, poison: null };
+  if (type === 'cupidon') return [...cibles.filter(id => estBot(salon, id)),
+    ...cibles.filter(id => !estBot(salon, id))].slice(0, 2);
+  return cibles.find(id => id !== bot && estBot(salon, id))
+    ?? cibles.find(id => id !== bot && id !== salon.config.hote) ?? cibles.find(id => id !== bot) ?? cibles[0] ?? null;
 }
 
 function actualiserPartie(salon, maintenant = Date.now()) {
   const partie = salon.partie;
-  if (salon.cloture || !partie || partie.gagnant) return false;
+  if (salon.cloture || !partie || (partie.gagnant && !partie.tour.preparation)) return false;
   if (!enLigne(salon, salon.config.hote, maintenant)) salon.config.narration = false;
   if (![...salon.presence.values()].some(date => maintenant - date < presenceValide)) {
     return partie.geler('absence', maintenant);
   }
-  let change = partie.pause === 'absence' && partie.reprendre(maintenant);
+  const sonRequis = salon.config.narrationObligatoire && !['distribution', 'lancement'].includes(partie.tour.type);
+  if (sonRequis && partie.pause !== 'manuelle') {
+    if (!partie.pause && partie.tour.preparation?.limite <= maintenant) salon.config.narration = false;
+    if (!salon.config.narration) return partie.geler('son', maintenant);
+  }
+  let change = ['absence', 'son'].includes(partie.pause) && partie.reprendre(maintenant);
   if (partie.pause) return change;
   if (!salon.config.narration && partie.demarrerChrono(null, maintenant)) change = true;
   if (partie.actualiserTemps(maintenant)) change = true;
-  if (salon.demo) {
+  if (salon.bots?.length) {
     for (let i = 0; i < 64 && !partie.gagnant; i++) {
+      if (partie.tour.preparation) break;
       const { acteurs, cibles, type, numero, reponses } = partie.tour;
-      const bot = acteurs.find(id => salon.bots.includes(id) && !reponses.has(id));
+      const bot = acteurs.find(id => estBot(salon, id) && !reponses.has(id));
       if (!bot) break;
-      const cible = cibles.find(id => id !== bot && id !== salon.config.hote) ?? cibles.find(id => id !== bot) ?? cibles[0];
-      const choix = type === 'sorciere' ? { soin: false, poison: null } : cible ?? null;
-      partie.agir(bot, numero, choix);
+      partie.agir(bot, numero, choixDuBot(salon, bot, type, cibles));
       change = true;
     }
   }
@@ -206,9 +224,27 @@ function ajouter(salon, nom) {
   return joueur;
 }
 
+function modifierBots(salon, action, id) {
+  if (salon.partie) throw erreurHttp(409, 'Les bots se règlent avant le tirage des cartes.');
+  const joueurs = salon.joueurs.slice();
+  const bots = salon.bots ?? [];
+  if (action === 'ajouterbot') {
+    if (joueurs.length >= salon.total) throw erreurHttp(409, 'Le salon est complet.');
+    let numero = 1;
+    while (joueurs.some(joueur => joueur.nom.toLowerCase() === `bot ${numero}`)) numero++;
+    salon.bots = [...bots, ajouter(salon, `Bot ${numero}`).id];
+  } else {
+    if (!estBot(salon, id)) throw erreurHttp(404, 'Ce bot n’existe plus.');
+    salon.joueurs = joueurs.filter(joueur => joueur.id !== id);
+    salon.bots = bots.filter(bot => bot !== id);
+  }
+  try { sauvegarder(); }
+  catch (incident) { salon.joueurs = joueurs; salon.bots = bots; throw incident; }
+}
+
 function duree(valeur = 0) {
   if (!Number.isInteger(valeur) || (valeur !== 0 && (valeur < 15 || valeur > 900))) {
-    throw new Error('Un chronomètre doit durer entre 15 et 900 secondes. Choisis 0 pour le désactiver.');
+    throw new Error('Indique entre 0,25 et 15 minutes, ou 0 pour désactiver le chronomètre.');
   }
   return valeur;
 }
@@ -216,7 +252,8 @@ function duree(valeur = 0) {
 function reglagePartie(data) {
   const regles = verifierConfiguration(data.total, data.composition, data.ordre);
   return { ...regles, maire: data.maire === true, discret: data.discret === true,
-    debatSecondes: duree(data.debatSecondes ?? 120), voteSecondes: duree(data.voteSecondes ?? 60) };
+    debatSecondes: duree(data.debatSecondes ?? 120), voteSecondes: duree(data.voteSecondes ?? 60),
+    roleSecondes: duree(data.roleSecondes ?? dureeRoleDefaut) };
 }
 
 function creer(data, demo = false) {
@@ -234,6 +271,7 @@ function creer(data, demo = false) {
   const cle = session(salon, hote);
   if (demo) {
     salon.bots = ['Alice (bot)', 'Camille (bot)', 'Sam (bot)', 'Lou (bot)'].map(nom => ajouter(salon, nom).id);
+    config.narrationObligatoire = true;
     salon.partie = new Partie(salon.joueurs, config, 0);
     const voyante = salon.joueurs.find(({ id }) => salon.partie.cartes.get(id) === 'voyante').id;
     salon.partie.cartes.set(voyante, salon.partie.cartes.get(hote.id));
@@ -260,10 +298,11 @@ function vue(salon, joueur) {
   const anime = animateur(salon, joueur);
   const partie = salon.cloture ? null : salon.partie?.vue(joueur);
   if (partie && anime) partie.peutPasser = passerDisponibles(salon).length > 0;
+  if (partie?.annonceLue) partie.sousTitre = sousTitres[partie.annonceLue];
   return {
     code: salon.code, total: salon.total, joueur, hote, anime, hoteId: salon.config.hote, cohoteId: salon.config.cohote,
     demo: salon.demo, horloge: Date.now(), son,
-    joueurs: salon.joueurs.map(j => ({ ...j, enLigne: !salon.cloture && enLigne(salon, j.id) })),
+    joueurs: salon.joueurs.map(j => ({ ...j, bot: estBot(salon, j.id), enLigne: !salon.cloture && enLigne(salon, j.id) })),
     resume: resume(salon, joueur),
     config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire, discret: salon.config.discret },
     partie: partie ?? null,
@@ -301,7 +340,7 @@ function gerer(salon, action, data, token, mode) {
     return { code: salon.code, token: cle };
   }
   if (action === 'recuperer') {
-    if (!salon.joueurs.some(j => j.id === data.joueur)) throw new Error('Cette place n’existe plus.');
+    if (estBot(salon, data.joueur) || !salon.joueurs.some(j => j.id === data.joueur)) throw new Error('Cette place n’existe plus.');
     const maintenant = Date.now();
     for (const [secret, demande] of salon.demandes) {
       if (maintenant - demande.date > dureeReprise) salon.demandes.delete(secret);
@@ -349,7 +388,11 @@ function gerer(salon, action, data, token, mode) {
   if (action === 'narration') {
     if (joueur !== salon.config.hote) throw erreurHttp(403, 'La narration utilise le téléphone de l’hôte.');
     salon.config.narration = data.active === true;
-    if (!salon.config.narration && salon.partie?.demarrerChrono()) sauvegarder();
+    const partie = salon.partie;
+    if (data.active === true && partie?.pause === 'son' && partie.tour.preparation) {
+      partie.tour.preparation.limite = Date.now() + 90_000;
+    }
+    if (actualiserPartie(salon)) sauvegarder();
     return { active: salon.config.narration };
   }
   if (action === 'chronometre') {
@@ -358,15 +401,25 @@ function gerer(salon, action, data, token, mode) {
       throw erreurHttp(403, 'La narration utilise le téléphone de l’hôte.');
     }
     const partie = salon.partie;
-    if (partie?.id === data.partieId && (data.annonce !== undefined || data.phase === partie.tour.numero) &&
-        partie.demarrerChrono(data.annonce)) sauvegarder();
+    if (partie && partie.id === data.partieId) {
+      if (data.lecture === true) {
+        if (salon.config.narration && joueur === salon.config.hote) partie.suivreAnnonce(data.annonce);
+      } else if ((Number.isInteger(data.annonce) || (!salon.config.narrationObligatoire && data.phase === partie.tour.numero)) &&
+        partie.demarrerChrono(data.annonce)) {
+        actualiserPartie(salon);
+        sauvegarder();
+      }
+    }
     return { ok: true };
   }
   if (['pause', 'reprendre', 'passer', 'prolonger'].includes(action)) {
     if (!animateur(salon, joueur)) throw erreurHttp(403, 'Action réservée à l’animateur du salon.');
     if (!salon.partie || salon.partie.gagnant) throw new Error('La partie est terminée ou n’a pas commencé.');
     if (action === 'pause') salon.partie.geler('manuelle');
-    if (action === 'reprendre') salon.partie.reprendre();
+    if (action === 'reprendre') {
+      if (salon.partie.pause === 'son') throw erreurHttp(409, 'L’hôte doit réactiver le son.');
+      salon.partie.reprendre();
+    }
     if (action === 'passer') salon.partie.passer(passerDisponibles(salon));
     if (action === 'prolonger') salon.partie.prolonger();
     actualiserPartie(salon);
@@ -374,9 +427,13 @@ function gerer(salon, action, data, token, mode) {
     return vue(salon, joueur);
   }
   if (joueur !== salon.config.hote) throw Object.assign(new Error('Cette action est réservée à l’hôte.'), { status: 403 });
+  if (['ajouterbot', 'retirerbot'].includes(action)) {
+    modifierBots(salon, action, data.joueur);
+    return vue(salon, joueur);
+  }
   if (action === 'cohote') {
     const id = data.joueur;
-    if (id !== null && (id === salon.config.hote || !salon.joueurs.some(j => j.id === id))) {
+    if (id !== null && (id === salon.config.hote || estBot(salon, id) || !salon.joueurs.some(j => j.id === id))) {
       throw new Error('Choisis un invité du salon.');
     }
     if (salon.demo) throw new Error('La démo se joue en solo.');
@@ -397,9 +454,11 @@ function gerer(salon, action, data, token, mode) {
   } else if (action === 'lancer') {
     if (salon.partie || salon.joueurs.length !== salon.total) throw new Error('Toutes les places doivent être occupées.');
     if (!salon.joueurs.every(j => enLigne(salon, j.id))) throw new Error('Attends que tous les joueurs soient de retour.');
+    salon.config.narrationObligatoire = true;
     salon.partie = new Partie(salon.joueurs, salon.config, salon.prochainNumero);
+    actualiserPartie(salon);
   } else if (action === 'retour') {
-    if (salon.partie?.tour.type !== 'fin') throw new Error('La partie est encore en cours.');
+    if (salon.partie?.tour.type !== 'fin' || salon.partie.tour.preparation) throw new Error('Attends la fin de la partie.');
     salon.prochainNumero = salon.partie.numero;
     if (salon.demo) {
       salon.partie = new Partie(salon.joueurs, salon.config, salon.prochainNumero);
@@ -592,7 +651,7 @@ const serveur = createServer(async (req, res) => {
       if (salon.demo && req.method === 'GET') return json(res, 404, { erreur: 'Cette démo est privée.' });
       if (salon.cloture && req.method === 'GET') throw erreurHttp(410, 'Cette partie a été terminée par l’administration.');
       if (req.method === 'GET' && action === 'joueurs') {
-        const joueurs = mode === 'invite' ? salon.joueurs.filter(j => j.id !== salon.config.hote) : salon.joueurs;
+        const joueurs = salon.joueurs.filter(j => !estBot(salon, j.id) && (mode !== 'invite' || j.id !== salon.config.hote));
         return json(res, 200, { joueurs });
       }
       if (req.method === 'GET' && action === 'qr') {

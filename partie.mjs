@@ -1,6 +1,10 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { candidatsEnTete, ordreDeNuit, roles, tirerAuSort } from './regles.mjs';
 
+const phasesDeChoix = new Set([
+  ...Object.keys(roles).filter(role => roles[role].nuit), 'chasseur', 'departage', 'succession',
+]);
+
 export function verifierConfiguration(total, composition, ordre) {
   if (!Number.isInteger(total) || total < 5 || total > 16) throw new Error('Choisis entre 5 et 16 joueurs.');
   const quantites = Object.fromEntries(Object.keys(roles).map(role => [role, composition?.[role] ?? 0]));
@@ -66,7 +70,8 @@ export class Partie {
   }
 
   geler(type, maintenant = Date.now()) {
-    if (this.tour.type === 'fin' || this.pause === type || (this.pause === 'manuelle' && type === 'absence')) return false;
+    if ((this.tour.type === 'fin' && !this.tour.preparation) || this.pause === type ||
+        (this.pause === 'manuelle' && type === 'absence')) return false;
     if (!this.pause) this.pauseDepuis = maintenant;
     this.pause = type;
     return true;
@@ -93,25 +98,37 @@ export class Partie {
   demarrerChrono(annonce = null, maintenant = Date.now()) {
     const { preparation, duree } = this.tour;
     if (this.pause || !preparation || (annonce !== null && annonce !== preparation.annonce)) return false;
-    this.tour.echeance = maintenant + duree * 1000;
+    this.tour.echeance = duree ? maintenant + duree * 1000 : null;
     delete this.tour.preparation;
+    this.annonceLue = null;
     return true;
+  }
+
+  suivreAnnonce(id) {
+    if (Number.isInteger(id) && id >= this.tour.annonceDepuis + 1 &&
+        id >= (this.annonceLue ?? 0) && this.annonces[id - 1]) this.annonceLue = id;
   }
 
   actualiserTemps(maintenant) {
     if (this.pause) return false;
     if (this.tour.preparation) {
-      return maintenant >= this.tour.preparation.limite && this.demarrerChrono(null, maintenant);
+      return !this.config.narrationObligatoire &&
+        maintenant >= this.tour.preparation.limite && this.demarrerChrono(null, maintenant);
     }
     if (!this.tour.echeance || maintenant < this.tour.echeance) return false;
     if (this.tour.type === 'debat') this.ouvrirVote();
+    else if (this.tour.type === 'compteARebours') this.nuit();
+    else if (phasesDeChoix.has(this.tour.type)) {
+      const { acteurs, reponses } = this.tour;
+      this.passer(acteurs.filter(id => !reponses.has(id)));
+    }
     else this.terminerTour();
     return true;
   }
 
   absents(estEnLigne, maintenant = Date.now()) {
     const tour = this.tour;
-    return !this.pause && maintenant >= tour.debut + 15_000
+    return !this.pause && !tour.preparation && maintenant >= tour.debut + 15_000
       ? tour.acteurs.filter(id => !tour.reponses.has(id) && !estEnLigne(id)) : [];
   }
 
@@ -133,13 +150,16 @@ export class Partie {
 
   phase(type, acteurs, cibles, fichier) {
     const debut = Date.now();
-    const duree = type === 'debat' ? this.config.debatSecondes
-      : ['election', 'vote'].includes(type) ? this.config.voteSecondes : 0;
-    const differe = Boolean(duree && fichier && this.config.narration);
+    const duree = type === 'compteARebours' ? 10 : type === 'debat' ? this.config.debatSecondes
+      : ['election', 'vote'].includes(type) ? this.config.voteSecondes
+      : phasesDeChoix.has(type) ? this.config.roleSecondes : 0;
+    const annonceDepuis = this.finAnnoncePhase ?? 0;
+    if (fichier) this.annoncer(fichier);
+    const differe = type !== 'distribution' && this.config.narration && this.annonces.length > annonceDepuis;
+    this.annonceLue = null;
     this.tour = { type, acteurs, cibles, numero: ++this.numero, reponses: new Map(), debut, duree,
       echeance: duree && !differe ? debut + duree * 1000 : null,
-      annonceDepuis: this.finAnnoncePhase ?? 0 };
-    if (fichier) this.annoncer(fichier);
+      annonceDepuis };
     if (differe) this.tour.preparation = { annonce: this.annonces.length, limite: debut + 90_000 };
     this.finAnnoncePhase = this.annonces.length;
   }
@@ -151,10 +171,15 @@ export class Partie {
   }
 
   nuit() {
+    if (this.jour === 0) {
+      this.debutPartie = Date.now();
+      this.tempsSuspendu = 0;
+    }
     this.jour++;
     this.indexNuit = 0;
     this.victimeLoups = null;
     this.poison = null;
+    this.ancienMorduCetteNuit = false;
     this.derniereProtection = this.protection ?? null;
     this.protection = null;
     this.cibleCorbeau = null;
@@ -179,6 +204,9 @@ export class Partie {
       return;
     }
     this.annoncer('le-village-se-reveille');
+    if (this.ancienMorduCetteNuit) {
+      this.annoncer('ancien-survit', 'L’Ancien a survécu à la morsure des loups.');
+    }
     const victimes = [...new Set([this.victimeLoups, this.poison].filter(Boolean))];
     this.annoncer(victimes.length ? 'nuit-avec-victimes' : 'nuit-sans-victime',
       victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'La nuit n’a fait aucune victime.');
@@ -273,14 +301,16 @@ export class Partie {
   agir(id, numero, choix) {
     const { type, acteurs, cibles, reponses } = this.tour;
     if (this.pause) throw new Error('La partie est en pause.');
+    if (this.tour.preparation) throw new Error('Attends la fin de l’annonce.');
     if (numero !== this.numero || !acteurs.includes(id) || reponses.has(id)) {
       throw new Error('Cette action n’est plus disponible.');
     }
     if (type === 'debat') { this.ouvrirVote(); return; }
     if (type === 'lancement') {
-      this.debutPartie = Date.now();
-      this.tempsSuspendu = 0;
-      this.nuit();
+      if (this.config.narrationObligatoire) {
+        if (!this.config.narration) throw new Error('Active le son pour lancer la partie.');
+        this.phase('compteARebours', [], [], 'compte-a-rebours');
+      } else this.nuit();
       return;
     }
     if (type === 'attenteNuit') { this.nuit(); return; }
@@ -302,6 +332,11 @@ export class Partie {
         throw new Error('Choisis deux joueurs différents et encore en vie.');
       }
       this.couple = [...choix];
+      this.terminerRoleNocturne(type);
+      return;
+    }
+    if (type === 'voyante' && this.tour.revelationAttendue) {
+      if (choix !== 'confirmer') throw new Error('Confirme que tu as vu la carte.');
       this.terminerRoleNocturne(type);
       return;
     }
@@ -331,7 +366,10 @@ export class Partie {
       case 'distribution': this.phase('lancement', [this.config.hote], []); break;
       case 'voyante':
         this.historiques.get(id).push({ nuit: this.jour, nom: this.nom(choix), role: this.cartes.get(choix) });
-        this.terminerRoleNocturne(type);
+        this.tour.reponses.clear();
+        this.tour.revelationAttendue = true;
+        this.tour.echeance = null;
+        this.tour.numero = ++this.numero;
         break;
       case 'salvateur':
         this.protection = choix;
@@ -343,6 +381,7 @@ export class Partie {
         this.victimeLoups = cible === this.protection ? null : cible;
         if (this.cartes.get(this.victimeLoups) === 'ancien' && !this.ancienTouche) {
           this.ancienTouche = true;
+          this.ancienMorduCetteNuit = true;
           this.victimeLoups = null;
         }
         this.terminerRoleNocturne(type);
@@ -393,16 +432,23 @@ export class Partie {
   vue(id) {
     const { type, numero, acteurs, cibles, reponses } = this.tour;
     const concerne = acteurs.includes(id) && !reponses.has(id);
-    const peutAgir = concerne && !this.pause;
+    const peutAgir = concerne && !this.pause && !this.tour.preparation;
     const nuit = this.config.ordre.includes(type);
+    const choix = phasesDeChoix.has(type);
     const { preparation, echeance, duree, debut } = this.tour;
     let temps;
-    if (preparation) temps = { attente: true, duree, phase: numero, annonce: id === this.config.hote ? preparation.annonce : undefined };
-    else if (echeance) temps = { echeance, pauseDepuis: this.pauseDepuis };
+    if (!choix || concerne || id === this.config.hote) {
+      if (preparation) temps = { attente: true, duree, phase: numero, annonce: id === this.config.hote ? preparation.annonce : undefined };
+      else if (echeance) temps = { echeance, pauseDepuis: this.pauseDepuis };
+      if (temps && choix && concerne && duree) temps.choix = true;
+    }
     return {
       id: this.id, jour: this.jour, maire: this.maire, marqueCorbeau: this.marqueCorbeau ?? null, vivants: [...this.vivants],
       phase: nuit && !concerne ? 'nuit' : type, pause: this.pause,
-      temps,
+      temps, attendAnnonce: Boolean(preparation),
+      narrationActive: this.config.narration === true,
+      narrationObligatoire: this.config.narrationObligatoire === true,
+      annonceLue: preparation && this.config.narration ? this.annonces[this.annonceLue - 1]?.fichier : undefined,
       chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
         arrete: type === 'fin' ? debut : this.pauseDepuis },
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
@@ -410,12 +456,13 @@ export class Partie {
       progression: ['distribution', 'election', 'vote'].includes(type)
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),
-      bilan: type === 'fin' ? Object.fromEntries(this.cartes) : undefined,
+      bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
       role: this.cartes.get(id), amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
       allies: this.cartes.get(id) === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,
+        ...(this.tour.revelationAttendue && { revelationAttendue: true }),
         ...(type === 'sorciere' && {
           soin: this.potions.soin && Boolean(this.victimeLoups),
           poison: this.potions.poison,
