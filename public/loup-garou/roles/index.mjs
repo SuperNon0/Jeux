@@ -11,12 +11,14 @@ import ancien from './ancien.mjs';
 import corbeau from './corbeau.mjs';
 import enfantSauvage from './enfant-sauvage.mjs';
 import ivrogne from './ivrogne.mjs';
+import petiteFille from './petite-fille.mjs';
 // nouveaux-roles: imports
 
 export const listeRoles = Object.freeze([
   villageois, loups, voyante, sorciere, chasseur, cupidon, salvateur, ancien, corbeau,
   enfantSauvage,
   ivrogne,
+  petiteFille,
   // nouveaux-roles: liste
 ]);
 

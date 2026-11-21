@@ -635,7 +635,10 @@ function commandes(p) {
     const message = p.aRepondu ? 'Ton choix est enregistré.' : sorti ? 'Tu suis la partie en spectateur.'
       : p.phase === 'nuit' ? 'Ton téléphone t’indiquera si tu dois agir.'
       : p.phase === 'attenteNuit' ? 'En attente de la confirmation de l’hôte.' : 'En attente des autres joueurs.';
-    return `<p class="notice attente">${icone(p.aRepondu ? 'check' : sorti ? 'eye' : 'hourglass', 18)}${message}</p>`;
+    const espion = p.espion?.numero !== undefined
+      ? action(p.espion.bouton, 'eye', 'agir', 'gh', `data-envoi data-numero="${p.espion.numero}" data-choix="espionner"`)
+      : p.espion?.fait && p.infoRole ? `<p class="notice">${icone('eye', 18)}${echapper(p.infoRole)}</p>` : '';
+    return espion + `<p class="notice attente">${icone(p.aRepondu ? 'check' : sorti ? 'eye' : 'hourglass', 18)}${message}</p>`;
   }
   const agir = (texte, ic, classe = 'pri', choix = '') => action(texte, ic, 'agir', classe, `data-envoi data-numero="${p.numero}" ${choix ? `data-choix="${choix}"` : ''}`);
   if (p.phase === 'distribution') {
