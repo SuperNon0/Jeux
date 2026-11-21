@@ -100,7 +100,8 @@ const marque = `<a class="brand" href="/" data-action="accueil"><span class="emb
 const medaille = '<img class="medaille" src="/illustrations/medaillon-maire.png" alt="Maire">';
 const art = nom => {
   const image = roles[nom]?.art;
-  const style = image ? ` style="background-image: url('/illustrations/${image.image}'); background-size: ${image.taille ?? 'cover'}; background-position: ${image.position ?? 'center'}"` : '';
+  // Le dos de carte reste dessous tant que l’illustration d’un nouveau rôle n’est pas encore importée.
+  const style = image ? ` style="background-image: url('/illustrations/${image.image}'), url('/illustrations/cartes-et-ambiances.png'); background-size: ${image.taille ?? 'cover'}, 300% auto; background-position: ${image.position ?? 'center'}, left bottom"` : '';
   return `<span class="art art-${nom}"${style} aria-hidden="true"></span>`;
 };
 const choixPrenom = `<div class="champ-jeu"><label for="prenom-salon">Ton prénom</label><select id="prenom-salon" name="prenom" required>
