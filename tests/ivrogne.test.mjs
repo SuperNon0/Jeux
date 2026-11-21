@@ -41,6 +41,25 @@ test('attaqué pendant qu’il dort ailleurs, l’Ivrogne survit', () => {
   assert.ok(p.annonces.some(a => a.fichier === 'nuit-sans-victime'));
 });
 
+test('avec deux loups, l’Ivrogne qui dort chez l’un d’eux meurt au réveil avec la victime de la meute', () => {
+  const p = partie({
+    Alice: 'villageois', Bastien: 'ivrogne', Camille: 'villageois', Diane: 'loups',
+    Élie: 'villageois', Félix: 'salvateur', Gabi: 'loups',
+  });
+  jouer(p, 'Félix', null);
+  jouer(p, 'Bastien', 'Gabi');
+  assert.ok(p.vivants.has('Bastien'));
+  jouer(p, 'Diane', 'Camille');
+  assert.ok(p.vivants.has('Bastien'));
+  jouer(p, 'Gabi', 'Camille');
+  assert.ok(!p.vivants.has('Bastien'));
+  assert.ok(!p.vivants.has('Camille'));
+  assert.ok(p.vivants.has('Gabi'));
+  assert.deepEqual(p.annonces.slice(-3).map(a => a.fichier),
+    ['le-village-se-reveille', 'nuit-avec-victimes', 'debut-debat']);
+  assert.equal(p.annonces.at(-2).message, 'Élimination de nuit · Camille, Bastien');
+});
+
 test('si les loups dévorent son hôte, l’Ivrogne meurt avec lui', () => {
   const p = partie();
   nuit(p, { hote: 'Camille', cible: 'Camille' });

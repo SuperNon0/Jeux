@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import QRCode from 'qrcode';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { Partie, verifierConfiguration } from './partie.mjs';
-import { prenoms } from './regles.mjs';
+import { prenoms, votePasse } from './regles.mjs';
 
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const indexHtml = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8').replaceAll('__JEUX_VERSION__', version);
@@ -177,7 +177,15 @@ function actualiserPartie(salon, maintenant = Date.now()) {
       const bot = acteurs.find(id => estBot(salon, id) &&
         (!reponses.has(id) || (choixHumain !== undefined && reponses.get(id) !== choixHumain)));
       if (!bot) break;
-      partie.agir(bot, numero, choixDuBot(salon, bot, type, cibles));
+      let choix;
+      if (partie.peutPasserVote()) {
+        const humains = acteurs.filter(id => !estBot(salon, id));
+        if (humains.length && humains.every(id => !reponses.has(id) || reponses.get(id) === votePasse)) {
+          if (humains.some(id => !reponses.has(id))) break;
+          choix = votePasse;
+        }
+      }
+      partie.agir(bot, numero, choix ?? choixDuBot(salon, bot, type, cibles));
       change = true;
     }
   }
