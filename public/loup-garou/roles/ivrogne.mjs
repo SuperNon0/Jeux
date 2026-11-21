@@ -8,13 +8,14 @@ export default {
   id: 'ivrogne',
   nom: 'Ivrogne',
   camp: 'village',
-  pouvoir: 'Chaque nuit, tu peux aller finir la soirée chez quelqu’un. Si les loups t’attaquent chez toi, tu n’y es pas. Si les loups dévorent ton hôte, tu meurs avec lui.',
+  pouvoir: 'Chaque nuit, tu peux aller finir la soirée chez quelqu’un et tu découvres son rôle. Si les loups t’attaquent chez toi, tu n’y es pas. Si les loups dévorent ton hôte, tu meurs avec lui.',
   explication: [
     'Chaque nuit, avant les loups, le narrateur t’appelle et tu choisis chez qui tu vas boire un dernier verre. Tu peux aussi rester chez toi.',
     'Tu ne peux pas retourner chez la même personne deux nuits de suite.',
     'Si les loups t’attaquent alors que tu dors ailleurs, ils trouvent ta maison vide : tu survis et personne ne meurt de leur attaque.',
     'Si les loups dévorent la personne chez qui tu dors, tu meurs avec elle. Si le Gardien ou la Sorcière la sauve, tu es sauvé aussi.',
-    'Si tu restes chez toi, tu es un simple membre du village pour la nuit. Tu gagnes avec le village.',
+    'Au réveil, tu découvres le rôle de la personne chez qui tu as dormi. Il reste noté sous ta carte pour toute la partie.',
+    'Si tu restes chez toi, tu ne découvres rien et tu es un simple membre du village pour la nuit. Tu gagnes avec le village.',
   ],
   art: { image: 'roles/ivrogne.png' },
 
@@ -45,9 +46,11 @@ export default {
   },
 
   info(partie, joueur) {
-    const { ivrogne, precedent } = etatIvrogne(partie);
-    if (ivrogne !== joueur || !precedent) return '';
-    return `Tu as dormi chez ${partie.nom(precedent)} la nuit dernière : impossible d’y retourner ce soir.`;
+    const { ivrogne, precedent, decouvertes = [] } = etatIvrogne(partie);
+    if (ivrogne !== joueur) return '';
+    const vus = decouvertes.map(({ nuit, nom, role }) => `nuit ${nuit}, ${nom} : ${role}`).join(' · ');
+    return [vus && `Tes hôtes : ${vus}.`, precedent && `Impossible de retourner chez ${partie.nom(precedent)} ce soir.`]
+      .filter(Boolean).join(' ');
   },
 
   // Les loups visent l’Ivrogne pendant qu’il dort ailleurs : la maison est vide.
@@ -61,6 +64,11 @@ export default {
     const etat = etatIvrogne(partie);
     if (etat.hote && etat.hote === partie.victimeLoups && partie.vivants.has(etat.ivrogne)) {
       partie.ajouterVictimeNuit(etat.ivrogne, 'loups');
+    }
+    // Au réveil, il se souvient de la carte de son hôte, même si les loups les emportent.
+    if (etat.hote) {
+      etat.decouvertes = [...(etat.decouvertes ?? []),
+        { nuit: partie.jour, nom: partie.nom(etat.hote), role: partie.nomRole(partie.cartes.get(etat.hote)) }];
     }
     etat.precedent = etat.hote ?? null;
     etat.hote = null;

@@ -74,3 +74,10 @@ test('l’Ivrogne ne retourne pas chez la même personne deux nuits de suite', (
   assert.ok(!p.vue('Bastien').action.cibles.includes('Camille'));
   assert.match(p.vue('Bastien').infoRole, /Camille/);
 });
+
+test('au réveil, l’Ivrogne découvre le rôle de son hôte', () => {
+  const p = partie();
+  nuit(p, { hote: 'Félix', cible: 'Élie' });
+  assert.match(p.vue('Bastien').infoRole, /nuit 1, Félix : Gardien/);
+  assert.equal(p.vue('Camille').infoRole, undefined);
+});

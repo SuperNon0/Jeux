@@ -200,6 +200,8 @@ export class Partie {
 
   nom(id) { return this.joueurs.find(joueur => joueur.id === id)?.nom; }
 
+  nomRole(role) { return roles[role]?.nom ?? role; }
+
   partenaireAmoureux(id) {
     if (this.couple?.includes(id)) return this.couple.find(partenaire => partenaire !== id);
   }
