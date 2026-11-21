@@ -5,6 +5,7 @@ const onglets = document.querySelector('#onglets');
 const feuille = document.querySelector('#feuille');
 const avis = document.querySelector('#avis');
 const nomination = document.querySelector('#nomination');
+const versionChargee = new URL(import.meta.url).searchParams.get('v');
 
 const zones = { accueil: ['Accueil', 'home'], salons: ['Mes salons', 'users'], partie: ['Partie', 'moon'],
   carte: ['Ma carte', 'layers'], journal: ['Journal', 'list'], admin: ['Administration', 'shield'], plus: ['Plus', 'dots'] };
@@ -13,7 +14,7 @@ const roles = {
   loups: { nom: 'Loup-Garou', camp: 'Meute', pouvoir: 'Choisis une cible chaque nuit avec les membres de ta meute.' },
   voyante: { nom: 'Voyante', camp: 'Village', pouvoir: 'Découvre le rôle d’une personne chaque nuit. Tes révélations restent dans ton journal privé.' },
   sorciere: { nom: 'Sorcière', camp: 'Village', pouvoir: 'Tu as une potion de soin et une de poison. Chacune ne s’utilise qu’une fois.' },
-  chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, choisis une personne à emporter.' },
+  chasseur: { nom: 'Chasseur', camp: 'Village', pouvoir: 'Si les loups ou le vote t’éliminent, choisis une personne à emporter au réveil.' },
   cupidon: { nom: 'Cupidon', camp: 'Village', pouvoir: 'La première nuit, lie deux personnes, toi compris si tu le veux. Si l’une meurt, l’autre meurt de chagrin. Un couple formé d’un loup et d’un membre du village gagne s’il reste seul en vie.' },
   salvateur: { nom: 'Salvateur', camp: 'Village', pouvoir: 'Protège une personne de l’attaque des loups, toi compris. D’une nuit à la suivante, choisis une personne différente ou passe ton tour.' },
   ancien: { nom: 'Ancien', camp: 'Village', pouvoir: 'Tu survis à la première attaque des loups qui te touche. Le poison et le vote peuvent t’éliminer dès la première fois.' },
@@ -86,6 +87,7 @@ let donneesAdmin, chargementAdmin = false, erreurAdmin = '';
 let reprise = code && !token ? sauvegarde.lire(cleReprise(code)) : null;
 let etat, erreur, minuterieAvis, minuterieMaire, envoi = false, synchronise = false, revision = 0;
 let revelee = false;
+let voteRetourne;
 let tiragePartie, minuterieTirage;
 let decalageHorloge = 0;
 let configurationSon = hebergement.son ?? { volume: 100, associations: {} };
@@ -108,7 +110,10 @@ const icone = (nom, taille = 20) => `<svg class="i s${taille}" aria-hidden="true
 const marque = `<a class="brand" href="/" data-action="accueil"><span class="embleme">${icone('moon', 22)}</span><span class="wm">Jeux</span></a>`;
 const medaille = '<img class="medaille" src="/illustrations/medaillon-maire.png" alt="Maire">';
 const art = nom => `<span class="art art-${nom}" aria-hidden="true"></span>`;
-const pseudo = '<label class="champ-jeu">Ton pseudo<input name="nom" required maxlength="24" autocomplete="nickname" placeholder="Ex. Camille"></label>';
+const choixPrenom = `<div class="champ-jeu"><label for="prenom-salon">Ton prénom</label><select id="prenom-salon" name="prenom" required>
+  <option value="" disabled selected>Choisir un prénom</option>
+  ${(hebergement.prenoms ?? []).map(prenom => `<option value="${echapper(prenom)}">${echapper(prenom)}</option>`).join('')}
+</select></div>`;
 const bouton = (texte, nom, classe, attributs = '') => `<button type="button" class="btn ${classe}" ${attributs}>${icone(nom, 18)}${texte}</button>`;
 const action = (texte, nom, id, classe = '', attributs = '') => bouton(texte, nom, classe, `data-action="${id}" ${attributs}`);
 const etiquette = id => etat.joueurs.find(j => j.id === id)?.nom ?? '';
@@ -272,6 +277,14 @@ function pisteSuivante() {
 }
 
 function actualiser(nouveau) {
+  if (versionChargee && nouveau.version && nouveau.version !== versionChargee) {
+    const adresse = new URL(location.href);
+    if (adresse.searchParams.get('mise-a-jour') !== nouveau.version) {
+      adresse.searchParams.set('mise-a-jour', nouveau.version);
+      location.replace(adresse.href);
+      return;
+    }
+  }
   if (nouveau.son) configurationSon = nouveau.son;
   decalageHorloge = (nouveau.horloge ?? Date.now()) - Date.now();
   if (!etat && nouveau.hote && !son) declarerNarration(false);
@@ -279,6 +292,7 @@ function actualiser(nouveau) {
   const partie = nouveau.partie;
   if (precedente?.id !== partie?.id) {
     revelee = false;
+    voteRetourne = undefined;
     clearTimeout(minuterieTirage);
     tiragePartie = null;
     choixCible = { numero: undefined, valeur: null };
@@ -296,6 +310,9 @@ function actualiser(nouveau) {
   }
   if (precedente?.phase === 'distribution' && zone === 'carte' &&
       (partie?.phase === 'lancement' || (precedente.action && partie?.aRepondu))) zone = 'partie';
+  if (partie?.phase === 'compteARebours' && precedente?.phase !== 'compteARebours' && ['carte', 'journal'].includes(zone)) {
+    zone = 'partie';
+  }
   const annonces = partie?.annonces ?? [];
   const recentes = annonces.filter(a => a.id > dernierSon);
   const revelation = precedente && precedente.id === partie?.id && partie.historique.length > precedente.historique.length
@@ -634,11 +651,16 @@ function commandes(p) {
       <div class="actions">${agir('Relancer le vote', 'refresh', 'pri', 'revoter')}${agir('Tirer au sort', 'dice', '', 'tirer')}</div>`;
   }
   if (p.phase === 'sorciere') {
+    if (p.action.potion === 'soin') {
+      return `<div class="actions">
+        ${action(`Sauver ${echapper(p.action.victime)}`, 'heart', 'potion-soin', 'pri', `data-numero="${p.numero}" data-utiliser`)}
+        ${action('Garder le soin', 'chev', 'potion-soin', 'gh', `data-numero="${p.numero}"`)}
+      </div>`;
+    }
     return `<form data-form="sorciere" data-numero="${p.numero}">
-      ${p.action.soin ? `<label class="case"><input type="checkbox" name="soin">Sauver ${echapper(p.action.victime)}</label>` : ''}
-      ${p.action.poison ? `<label class="champ-jeu">Potion de poison<select name="poison"><option value="">Garder la potion</option>
-        ${p.action.cibles.map(id => `<option value="${id}">${echapper(etiquette(id))}</option>`).join('')}</select></label>` : ''}
-      <button class="btn pri" data-envoi>${icone('check', 18)}Valider mes potions</button></form>`;
+      <label class="champ-jeu">Potion de poison<select name="poison"><option value="">Garder le poison</option>
+        ${p.action.cibles.map(id => `<option value="${id}">${echapper(etiquette(id))}</option>`).join('')}</select></label>
+      <button class="btn pri" data-envoi>${icone('check', 18)}Valider mon choix</button></form>`;
   }
   return choixJoueurs(p);
 }
@@ -676,6 +698,21 @@ function carte(p) {
   }
 }
 
+function carteDuVote(vote) {
+  if (!vote || !roles[vote.role]) return '';
+  const nom = echapper(vote.nom);
+  const retournee = voteRetourne === vote.numero;
+  return `<section class="carte-vote">
+    <h3 class="ttl">Carte de ${nom}</h3>
+    <button type="button" class="carte ${retournee ? 'revelee' : ''}" data-action="retourner-vote" aria-pressed="${retournee}"
+      aria-label="${retournee ? 'Masquer' : 'Retourner'} la carte de ${nom}">
+      <span class="face dos">${art('dos')}</span><span class="face recto">${art(vote.role)}</span>
+    </button>
+    <p class="soft" aria-live="polite">${retournee ? `Le rôle de ${nom} était <strong>${roles[vote.role].nom}</strong>.`
+      : 'Touche la carte pour révéler le rôle.'}</p>
+  </section>`;
+}
+
 function vuePhase(p) {
   if (p.pause === 'son') {
     return `<section class="panneau phase phase-annonce">
@@ -706,9 +743,11 @@ function vuePhase(p) {
     const resultat = p.gagnant === 'amoureux' ? p.vivants.map(etiquette).map(echapper).join(' et ') : '';
     return afficheScene('scene-jour resultat', `<h2 class="ttl">${victoire}</h2>`,
       resultat || 'Les rôles de tous les joueurs sont révélés.',
-      etat.hote ? action(etat.demo ? 'Recommencer la démo' : 'Retour au salon', 'rotate', 'retour', 'pri') : '', `<span class="scene-etiquette">${icone('star', 16)}Partie terminée</span>`);
+      etat.hote ? action(etat.demo ? 'Recommencer la démo' : 'Retour au salon', 'rotate', 'retour', 'pri') : '', `<span class="scene-etiquette">${icone('star', 16)}Partie terminée</span>`) + carteDuVote(p.revelationVote);
   }
-  const [label, titre, texte, ic] = phases[p.phase];
+  const phase = phases[p.phase];
+  if (!phase) return '<p class="notice" role="status">Synchronisation de la partie…</p>';
+  const [label, titre, texte, ic] = phase;
   const progression = p.progression;
   const bulletinSimple = interfaceJoueur() && p.phase === 'vote' && p.action;
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
@@ -731,7 +770,9 @@ function vuePhase(p) {
       <progress value="${progression.reponses}" max="${progression.total}" aria-label="${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}"></progress></div>` : ''}
     ${p.pause ? `<p class="notice">${icone('clock', 18)}Partie en pause</p>` : ''}
     ${!animateurPresent ? `<p class="notice avertissement">${icone('alert', 18)}Le salon attend un animateur.</p>` : ''}
+    ${p.phase === 'attenteNuit' ? carteDuVote(p.revelationVote) : ''}
     ${commandes(p)}
+    ${['chasseur', 'succession'].includes(p.phase) ? carteDuVote(p.revelationVote) : ''}
     ${p.action?.revelationAttendue ? '' : boutonRevelation(p)}
     ${p.phase === 'distribution' && etat.hote ? boutonSon() : ''}
     ${etat.anime ? `<div class="actions commandes-phase">
@@ -754,6 +795,7 @@ function chronos(p) {
 
 function partie() {
   const p = etat.partie;
+  if (p.phase === 'compteARebours') return `${entetePage('Partie', '')}${vuePhase(p)}`;
   if (p.phase === 'distribution' && tiragePartie === p.id && ['partie', 'carte'].includes(zone)) {
     return `<section class="panneau carte-zone carte-distribuee" aria-labelledby="titre-tirage">
       <h1 id="titre-tirage" class="ttl">Tirage des cartes</h1>
@@ -961,7 +1003,7 @@ function sectionCreation(titre, picto, contenu) {
 const formCreation = () => `<form data-form="creer">
   <div class="creation-contenu">
     <div class="creation-identite">
-      ${pseudo}
+      ${choixPrenom}
       <label class="champ-jeu">Nombre de joueurs <select name="total">${Array.from({ length: 12 }, (_, i) => i + 5)
         .map(n => `<option value="${n}" ${n === 6 ? 'selected' : ''}>${n} joueurs</option>`).join('')}</select></label>
     </div>
@@ -1181,7 +1223,7 @@ function contenuFeuille(type, contexte) {
       <button class="btn pri" data-envoi>${icone('check', 18)}Enregistrer</button></form>`];
     case 'rejoindre': return ['Rejoindre une partie', `<form data-form="rejoindre">
       <label class="champ-jeu">Code du salon<input name="code" required minlength="6" maxlength="6" pattern="[A-HJ-NP-Za-hj-np-z2-9]{6}" value="${code}"
-      autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC234"></label>${pseudo}
+      autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC234"></label>${choixPrenom}
       <button class="btn pri" data-envoi>${icone('arrow', 18)}Rejoindre</button></form>
       <button class="lien" type="button" data-action="reprise">${icone('rotate', 16)}Reprendre une place existante</button>`];
     case 'apparence': return ['Apparence', `<div class="options">
@@ -1487,7 +1529,7 @@ document.addEventListener('submit', event => {
       return;
     }
     if (actionForm === 'creer') {
-      const session = await api('', { nom: data.get('nom'), ...reglageSalon(data) });
+      const session = await api('', { prenom: data.get('prenom'), ...reglageSalon(data) });
       fermerFeuille(false);
       enregistrer(session);
     } else if (actionForm === 'rejoindre') {
@@ -1507,7 +1549,7 @@ document.addEventListener('submit', event => {
           sauvegarde.oublier(cleSession(salle));
         }
       }
-      const session = await api('rejoindre', { nom: data.get('nom') }, null, salle);
+      const session = await api('rejoindre', { prenom: data.get('prenom') }, null, salle);
       fermerFeuille(false);
       enregistrer(session);
     } else if (actionForm === 'recuperer') {
@@ -1520,7 +1562,7 @@ document.addEventListener('submit', event => {
       let choix;
       if (actionForm === 'cible') choix = data.get('cible');
       else if (actionForm === 'cupidon') choix = [data.get('premier'), data.get('second')];
-      else choix = { soin: data.has('soin'), poison: data.get('poison') || null };
+      else choix = { potion: 'poison', cible: data.get('poison') || null };
       actualiser(await api('agir', { numero: Number(form.dataset.numero), choix }));
       return;
     }
@@ -1580,12 +1622,22 @@ document.addEventListener('click', event => {
     feuille.querySelectorAll('[data-action="accent"]').forEach(bouton => bouton.setAttribute('aria-pressed', bouton === cible));
     return;
   }
-  if (id === 'retourner') {
-    revelee = !revelee;
+  if (id === 'retourner' || id === 'retourner-vote') {
+    let retournee;
+    if (id === 'retourner-vote') {
+      const vote = etat?.partie?.revelationVote;
+      if (!vote) return;
+      retournee = voteRetourne !== vote.numero;
+      voteRetourne = retournee ? vote.numero : undefined;
+    } else {
+      revelee = !revelee;
+      retournee = revelee;
+    }
     afficher();
-    app.querySelector('.carte')?.focus({ preventScroll: true });
-    if (!mouvementReduit.matches) app.querySelector('.carte')?.animate(
-      [{ transform: revelee ? 'rotateY(0)' : 'rotateY(180deg)' }, { transform: revelee ? 'rotateY(180deg)' : 'rotateY(0)' }],
+    const boutonCarte = app.querySelector(`[data-action="${id}"]`);
+    boutonCarte?.focus({ preventScroll: true });
+    if (!mouvementReduit.matches) boutonCarte?.animate(
+      [{ transform: retournee ? 'rotateY(0)' : 'rotateY(180deg)' }, { transform: retournee ? 'rotateY(180deg)' : 'rotateY(0)' }],
       { duration: 500, easing: 'ease-in-out' });
     return;
   }
@@ -1676,6 +1728,10 @@ document.addEventListener('click', event => {
     if (id === 'agir' || id === 'lancer') await declarationNarration;
     if (id === 'ajouter-bot' || id === 'retirer-bot') {
       actualiser(await api(id === 'ajouter-bot' ? 'ajouterbot' : 'retirerbot', { joueur: cible.dataset.id }));
+      return;
+    }
+    if (id === 'potion-soin') {
+      actualiser(await api('agir', { numero: Number(cible.dataset.numero), choix: { potion: 'soin', utiliser: cible.hasAttribute('data-utiliser') } }));
       return;
     }
     if (id === 'agir') actualiser(await api('agir', { numero: Number(cible.dataset.numero), choix: cible.dataset.choix ?? null }));

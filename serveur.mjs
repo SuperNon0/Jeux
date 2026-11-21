@@ -8,8 +8,10 @@ import { promisify } from 'node:util';
 import QRCode from 'qrcode';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { Partie, verifierConfiguration } from './partie.mjs';
+import { prenoms } from './regles.mjs';
 
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+const indexHtml = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8').replaceAll('__JEUX_VERSION__', version);
 const acces = configurerAcces(process.env);
 const executerFichier = promisify(execFile);
 const audioInclus = new URL('./public/audio/', import.meta.url);
@@ -23,6 +25,7 @@ const dossierCommandes = dossierMaintenance && resolve(dossierMaintenance, 'comm
 const demandeMiseAJour = dossierCommandes && resolve(dossierCommandes, 'demande');
 const fichierStatut = dossierMaintenance && resolve(dossierMaintenance, 'statut.json');
 const nomAudio = /^[a-z0-9]+(?:-[a-z0-9]+)*\.mp3$/;
+const listePrenoms = Object.values(prenoms);
 const tailleMaxAudio = 8 * 1024 * 1024;
 const erreurHttp = (status, message) => Object.assign(new Error(message), { status });
 
@@ -217,11 +220,19 @@ function ajouter(salon, nom) {
   }
   const propre = nom.trim();
   if (salon.joueurs.some(j => j.nom.toLowerCase() === propre.toLowerCase())) {
-    throw new Error('Ce pseudo est déjà utilisé.');
+    throw new Error('Ce prénom est déjà utilisé dans le salon.');
   }
   const joueur = { id: randomUUID(), nom: propre };
   salon.joueurs.push(joueur);
   return joueur;
+}
+
+function identiteJoueur(data, listeImposee = false) {
+  if (!listeImposee && !Object.hasOwn(data, 'prenom')) return data.nom;
+  const valeur = data.prenom ?? data.nom;
+  const prenom = typeof valeur === 'string' ? valeur.normalize('NFC') : '';
+  if (!listePrenoms.includes(prenom)) throw erreurHttp(400, 'Choisis un prénom dans la liste.');
+  return prenom;
 }
 
 function modifierBots(salon, action, id) {
@@ -259,6 +270,7 @@ function reglagePartie(data) {
 function creer(data, demo = false) {
   if (salons.size >= 500) throw erreurHttp(503, 'Le serveur a atteint sa capacité. Supprime des salons depuis Administration.');
   const config = reglagePartie(data);
+  if (Object.hasOwn(data, 'prenom')) config.annoncesEliminations = true;
   let code;
   do { code = Array.from({ length: 6 }, () => alphabet[randomInt(alphabet.length)]).join(''); }
   while (salons.has(code));
@@ -266,7 +278,7 @@ function creer(data, demo = false) {
     code, total: data.total, joueurs: [], sessions: new Map(), demandes: new Map(), partie: null,
     presence: new Map(), activite: Date.now(), prochainNumero: 0, config, demo,
   };
-  const hote = ajouter(salon, data.nom);
+  const hote = ajouter(salon, identiteJoueur(data));
   salon.config.hote = hote.id;
   const cle = session(salon, hote);
   if (demo) {
@@ -298,9 +310,9 @@ function vue(salon, joueur) {
   const anime = animateur(salon, joueur);
   const partie = salon.cloture ? null : salon.partie?.vue(joueur);
   if (partie && anime) partie.peutPasser = passerDisponibles(salon).length > 0;
-  if (partie?.annonceLue) partie.sousTitre = sousTitres[partie.annonceLue];
+  if (partie?.annonceLue) partie.sousTitre = partie.messageEliminationLue ?? sousTitres[partie.annonceLue];
   return {
-    code: salon.code, total: salon.total, joueur, hote, anime, hoteId: salon.config.hote, cohoteId: salon.config.cohote,
+    code: salon.code, version, total: salon.total, joueur, hote, anime, hoteId: salon.config.hote, cohoteId: salon.config.cohote,
     demo: salon.demo, horloge: Date.now(), son,
     joueurs: salon.joueurs.map(j => ({ ...j, bot: estBot(salon, j.id), enLigne: !salon.cloture && enLigne(salon, j.id) })),
     resume: resume(salon, joueur),
@@ -327,7 +339,7 @@ function gerer(salon, action, data, token, mode) {
   if (action === 'rejoindre') {
     if (salon.partie || salon.joueurs.length >= salon.total) throw new Error('Ce salon est complet ou la partie a commencé.');
     const activite = salon.activite;
-    const nouveau = ajouter(salon, data.nom);
+    const nouveau = ajouter(salon, identiteJoueur(data, salon.config.annoncesEliminations));
     const cle = session(salon, nouveau);
     try { sauvegarder(); }
     catch (incident) {
@@ -631,7 +643,7 @@ const serveur = createServer(async (req, res) => {
     if (!mode) return json(res, 421, { erreur: 'Utilise le lien hôte ou le lien d’invitation.' });
     if (chemin === '/api/admin' || chemin.startsWith('/api/admin/')) return await admin(req, res, chemin, mode);
     if (req.method === 'GET' && chemin === '/api/configuration') {
-      return json(res, 200, { mode, origineInvites: acces?.invites.origin, son, ...(mode === 'hote' && { compositions }) });
+      return json(res, 200, { mode, version, origineInvites: acces?.invites.origin, son, prenoms: listePrenoms, ...(mode === 'hote' && { compositions }) });
     }
     if (req.method === 'POST' && chemin === '/api/demo') {
       if (mode !== 'hote') throw erreurHttp(403, 'La démo est réservée à l’administration.');
@@ -672,6 +684,10 @@ const serveur = createServer(async (req, res) => {
     if (!['GET', 'HEAD'].includes(req.method) ||
         !/^\/(?:index\.html|(?:style|encre|polices)\.css|app\.js|icones\.svg|polices\/[a-z0-9-]+\.woff2|illustrations\/[a-z-]+\.png|audio\/[a-z0-9-]+\.mp3)$/.test(fichier)) {
       return json(res, 404, { erreur: 'Page introuvable.' });
+    }
+    if (fichier === '/index.html') {
+      res.writeHead(200, { 'Content-Type': formats.html, 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(indexHtml) });
+      return res.end(req.method === 'GET' ? indexHtml : undefined);
     }
     let local = new URL(`./public${fichier}`, import.meta.url);
     let infos;

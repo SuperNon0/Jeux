@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { test } from 'node:test';
 import { Partie, verifierConfiguration } from './partie.mjs';
+import { annonceElimination, prenoms, roles } from './regles.mjs';
 
 async function horlogeDeTest(t) {
   const dossier = await mkdtemp(join(tmpdir(), 'jeux-horloge-'));
@@ -64,7 +65,10 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal(qr.headers.get('content-type'), 'image/png');
   assert.equal((await qr.arrayBuffer()).byteLength > 500, true);
   const index = await fetch(origine + '/');
-  assert.match(await index.text(), /Loup-Garou/);
+  const page = await index.text();
+  assert.match(page, /Loup-Garou/);
+  assert.match(page, /src="\/app\.js\?v=\d+\.\d+\.\d+"/);
+  assert.equal(index.headers.get('cache-control'), 'no-store');
   const audio = await fetch(origine + '/audio/le-village-sendort.mp3', { headers: { Range: 'bytes=0-2' } });
   assert.equal(audio.status, 206);
   assert.equal(audio.headers.get('content-type'), 'audio/mpeg');
@@ -164,8 +168,18 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   await annonces();
   assert.deepEqual(new Set((await etat(chasseur)).partie.action.cibles), new Set([chasseur.joueur, villageois.joueur]));
   await agir(chasseur, chasseur.joueur, 'departage');
-  await agir(chasseur, loups.joueur, 'chasseur');
   await agir(chasseur, villageois.joueur, 'succession');
+  await annonces();
+  const resultat = (await etat(hote)).partie;
+  assert.equal(resultat.phase, 'attenteNuit');
+  assert.equal(resultat.revelationVote.role, 'chasseur');
+  assert.ok(!resultat.annonces.some(a => a.fichier === 'chasseur'));
+  await agir(hote, null, 'attenteNuit');
+  await agir(voyante, loups.joueur, 'voyante');
+  await agir(voyante, 'confirmer', 'voyante');
+  await agir(loups, sorciere.joueur, 'loups');
+  await agir(sorciere, { soin: false, poison: null }, 'sorciere');
+  await agir(chasseur, loups.joueur, 'chasseur');
   await annonces();
   assert.equal((await etat(hote)).partie.gagnant, 'village');
   assert.equal((await etat(villageois)).partie.maire, villageois.joueur);
@@ -180,12 +194,18 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal((await etat(hote)).partie.progression.reponses, 0);
 });
 
-test('les 44 annonces et le cri du Corbeau sont disponibles en MP3 avec leurs sous-titres', async () => {
+test('les annonces fournies et les combinaisons prénom-rôle ont chacune un MP3 et un sous-titre', async () => {
   const dossier = new URL('./public/audio/', import.meta.url);
   const fichiers = (await readdir(dossier)).filter(nom => nom.endsWith('.mp3'));
-  assert.equal(fichiers.length, 45);
+  assert.equal(fichiers.length, 45 + (Object.keys(prenoms).length + 1) * Object.keys(roles).length);
   const sousTitres = JSON.parse(await readFile(new URL('./public/annonces.json', import.meta.url), 'utf8'));
   assert.deepEqual(Object.keys(sousTitres).map(cle => `${cle}.mp3`).sort(), fichiers.sort());
+  for (const nom of [...Object.values(prenoms), 'Bot 1']) {
+    for (const role of Object.keys(roles)) {
+      const { fichier, texte } = annonceElimination(nom, role);
+      assert.equal(sousTitres[fichier], texte);
+    }
+  }
   for (const fichier of fichiers) {
     const entree = await readFile(new URL(fichier, dossier));
     const balise = entree.subarray(0, 3).toString() === 'ID3';
@@ -213,6 +233,32 @@ function jouer(partie, id, choix = null) {
 function finirVoteAvecAbstentions(partie) {
   partie.passer(partie.tour.acteurs.filter(id => !partie.tour.reponses.has(id)));
 }
+
+test('une élimination annonce le prénom et le rôle au bon moment, même avant le tir du Chasseur', () => {
+  const partie = partieAvecRoles({
+    'Noë': 'villageois', Julien: 'chasseur', 'Maël': 'loups', Marine: 'villageois', 'Bot 1': 'villageois',
+  }, { annoncesEliminations: true, narration: true });
+  const annoncerFin = () => partie.demarrerChrono(partie.vue('Noë').temps.annonce);
+  annoncerFin();
+  jouer(partie, 'Maël', 'Julien');
+  const fichier = 'elimination-julien-chasseur';
+  const piste = partie.vue('Noë').annonces.find(a => a.fichier === fichier);
+  assert.ok(piste);
+  assert.equal(piste.message, undefined);
+  assert.equal(partie.vue('Marine').annonces.some(a => a.fichier === fichier), false);
+  assert.equal(partie.vue('Julien').action, null);
+  partie.suivreAnnonce(piste.id);
+  const phrase = 'Julien a perdu la vie. Son rôle était Chasseur.';
+  assert.equal(partie.vue('Marine').messageEliminationLue, phrase);
+  assert.equal(partie.vue('Marine').annonces.find(a => a.fichier === fichier).message, phrase);
+  assert.equal(partie.vue('Julien').action, null);
+  annoncerFin();
+  jouer(partie, 'Julien', 'Bot 1');
+  const pisteBot = partie.vue('Noë').annonces.find(a => a.fichier === 'elimination-role-villageois');
+  partie.suivreAnnonce(pisteBot.id);
+  assert.equal(partie.vue('Marine').messageEliminationLue, 'Bot 1 a perdu la vie. Son rôle était Villageois.');
+  assert.equal(partie.vue('Marine').annonces.filter(a => a.fichier === fichier).length, 1);
+});
 
 test('le Salvateur protège avant que l’Ancien ou la Sorcière n’interviennent', () => {
   let partie = partieAvecRoles({
@@ -299,15 +345,18 @@ test('les choix de nuit ont un délai privé qui attend la narration', () => {
     ['sorciere', 'Gaëlle'], ['corbeau', 'Hugo'],
   ]) {
     const attente = partie.vue(acteur).temps;
-    assert.equal(partie.vue(acteur).phase, phase);
+    assert.equal(partie.tour.type, phase);
+    assert.equal(partie.vue(acteur).phase, 'nuit');
     assert.equal(attente.attente, true);
     assert.equal(attente.duree, 75);
-    assert.equal(attente.choix, true);
+    assert.equal(attente.choix, undefined);
     assert.equal(partie.vue('Jade').temps, undefined);
     assert.equal(partie.vue('Alice').temps.annonce, partie.annonces.length);
     const debut = partie.tour.debut;
     assert.equal(partie.actualiserTemps(debut + 50_000), false);
     partie.demarrerChrono(partie.vue('Alice').temps.annonce, debut + 10_000);
+    assert.equal(partie.vue(acteur).phase, phase);
+    assert.equal(partie.vue(acteur).temps.choix, true);
     assert.equal(partie.vue(acteur).temps.echeance, debut + 85_000);
     if (phase === 'loups') jouer(partie, 'Élie', 'Iris');
     assert.equal(partie.actualiserTemps(debut + 84_999), false);
@@ -317,6 +366,26 @@ test('les choix de nuit ont un délai privé qui attend la narration', () => {
   assert.equal(partie.ancienTouche, true);
   assert.equal(partie.vue('Alice').marqueCorbeau, null);
   assert.ok(!partie.annonces.some(a => ['amoureux-lies', 'cri-corbeau'].includes(a.fichier)));
+});
+
+test('le soin et le poison se jouent séparément, avec un chrono par choix', () => {
+  let partie = partieAvecRoles({
+    Alice: 'villageois', Bastien: 'sorciere', Camille: 'loups',
+    Diane: 'villageois', Élie: 'villageois', Félix: 'villageois',
+  }, { roleSecondes: 60 });
+  jouer(partie, 'Camille', 'Diane');
+  assert.equal(partie.vue('Bastien').action.potion, 'soin');
+  const premierNumero = partie.vue('Bastien').numero;
+  jouer(partie, 'Bastien', { potion: 'soin', utiliser: true });
+  assert.equal(partie.vue('Bastien').action.potion, 'poison');
+  assert.ok(partie.vue('Bastien').temps.echeance > Date.now() + 59_000);
+  assert.throws(() => partie.agir('Bastien', premierNumero, { potion: 'soin', utiliser: true }), /plus disponible/);
+  partie = Partie.charger(JSON.parse(JSON.stringify(partie.sauvegarde())), partie.joueurs, partie.config);
+  assert.equal(partie.vue('Bastien').action.poison, true);
+  jouer(partie, 'Bastien', { potion: 'poison', cible: 'Élie' });
+  assert.ok(partie.vue('Alice').vivants.includes('Diane'));
+  assert.ok(!partie.vue('Alice').vivants.includes('Élie'));
+  assert.deepEqual(partie.potions, { soin: false, poison: false });
 });
 
 test('les actions du Chasseur et du maire expirent sans lancer la nuit', () => {
@@ -525,7 +594,7 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   const avant = await (await appel('/api/admin')).json();
   assert.equal(avant.salons[0].code, hoteSalon.code);
   assert.equal(avant.salons[0].joueurs, 2);
-  assert.equal(avant.audios.length, 45);
+  assert.equal(avant.audios.length, 135);
   assert.ok(avant.annonces.includes('victoire-amoureux'));
   const illustration = await appel('/illustrations/roles-extension.png', { domaine: invite });
   assert.equal(illustration.headers.get('content-type'), 'image/png');
@@ -569,6 +638,16 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   assert.equal((await (await appel('/api/configuration', { domaine: invite })).json()).compositions, undefined);
 
   const sessionInvite = await inviteSalon.json();
+  const identites = (await (await appel('/api/configuration', { domaine: invite })).json()).prenoms;
+  assert.deepEqual(identites, ['Noë', 'Julien', 'Maël', 'Marine', 'Batiste', 'Mélissa', 'Gabi', 'Enzo', 'Clara']);
+  const nomme = await (await appel('/api/salons', { donnees: { ...regles, prenom: 'Noë' } })).json();
+  const entrer = donnees => appel(`/api/salons/${nomme.code}/rejoindre`, { domaine: invite, donnees });
+  assert.equal((await entrer({ prenom: 'Noë' })).status, 400);
+  assert.equal((await entrer({ nom: 'Autre personne' })).status, 400);
+  assert.equal((await entrer({ prenom: 'Maël'.normalize('NFD') })).status, 200);
+  const audioNomme = await appel('/audio/elimination-julien-chasseur.mp3', { domaine: invite });
+  assert.equal(audioNomme.status, 200);
+  assert.equal(audioNomme.headers.get('content-type'), 'audio/mpeg');
   const botInvite = { domaine: invite, token: sessionInvite.token, donnees: {} };
   assert.equal((await appel(room + 'ajouterbot', botInvite)).status, 403);
   const actionHote = (operation, donnees = {}) => appel(room + operation, { token: hoteSalon.token, donnees });
@@ -612,7 +691,7 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   assert.equal((await lireAnnonces(demoEtat, demoAppel)).phase, 'compteARebours');
   await horloge.avancer();
   const appelVoyante = (await demoEtat()).partie;
-  assert.equal(appelVoyante.phase, 'voyante');
+  assert.equal(appelVoyante.phase, 'nuit');
   assert.equal(appelVoyante.action, null);
   await demoAppel('chronometre', { partieId: appelVoyante.id, annonce: appelVoyante.temps.annonce, lecture: true });
   assert.match((await demoEtat()).partie.sousTitre, /Voyante se réveille/);

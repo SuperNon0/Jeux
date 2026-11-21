@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { candidatsEnTete, ordreDeNuit, roles, tirerAuSort } from './regles.mjs';
+import { annonceElimination, candidatsEnTete, ordreDeNuit, roles, tirerAuSort } from './regles.mjs';
 
 const phasesDeChoix = new Set([
   ...Object.keys(roles).filter(role => roles[role].nuit), 'chasseur', 'departage', 'succession',
@@ -118,6 +118,9 @@ export class Partie {
     if (!this.tour.echeance || maintenant < this.tour.echeance) return false;
     if (this.tour.type === 'debat') this.ouvrirVote();
     else if (this.tour.type === 'compteARebours') this.nuit();
+    else if (this.tour.type === 'sorciere' && this.potionAttendue() === 'soin' && this.potions.poison) {
+      this.ouvrirPoison(maintenant);
+    }
     else if (phasesDeChoix.has(this.tour.type)) {
       const { acteurs, reponses } = this.tour;
       this.passer(acteurs.filter(id => !reponses.has(id)));
@@ -176,6 +179,7 @@ export class Partie {
       this.tempsSuspendu = 0;
     }
     this.jour++;
+    this.revelationVote = null;
     this.indexNuit = 0;
     this.victimeLoups = null;
     this.poison = null;
@@ -221,6 +225,15 @@ export class Partie {
     this.prochainRole();
   }
 
+  potionAttendue() { return this.tour.etapePotion ?? (this.potions.soin && this.victimeLoups ? 'soin' : 'poison'); }
+
+  ouvrirPoison(maintenant = Date.now()) {
+    this.tour.etapePotion = 'poison';
+    this.tour.numero = ++this.numero;
+    this.tour.debut = maintenant;
+    this.tour.echeance = this.tour.duree ? maintenant + this.tour.duree * 1000 : null;
+  }
+
   debat() { this.phase('debat', this.animateurs(), [], 'debut-debat'); }
 
   attendreNuit() { this.phase('attenteNuit', this.animateurs(), []); }
@@ -247,6 +260,10 @@ export class Partie {
   eliminer(victimes, suite) {
     this.effets = [];
     this.suite = suite;
+    if (suite === 'debat' && this.chasseurAuReveil) {
+      this.effets.push({ type: 'chasseur', acteur: this.chasseurAuReveil });
+      this.chasseurAuReveil = null;
+    }
     const victimesDirectes = victimes.map(([id]) => id);
     for (const [id, cause] of victimes) this.enlever(id, cause, victimesDirectes);
     this.resoudreEffets();
@@ -254,8 +271,14 @@ export class Partie {
 
   enlever(id, cause, victimesDirectes = []) {
     if (!this.vivants.delete(id)) return;
-    if (this.cartes.get(id) === 'chasseur' && ['loups', 'vote'].includes(cause)) {
-      this.effets.unshift({ type: 'chasseur', acteur: id });
+    const role = this.cartes.get(id);
+    if (this.config.annoncesEliminations) {
+      const { fichier, message } = annonceElimination(this.nom(id), role);
+      this.annoncer(fichier, message);
+    }
+    if (role === 'chasseur') {
+      if (cause === 'vote') this.chasseurAuReveil = id;
+      if (cause === 'loups') this.effets.unshift({ type: 'chasseur', acteur: id });
     }
     if (this.maire === id) {
       this.maire = null;
@@ -272,6 +295,10 @@ export class Partie {
     if (this.effets.length && this.vivants.size) {
       const { type, acteur } = this.effets.shift();
       this.phase(type, [acteur], [...this.vivants], type === 'succession' ? 'succession-maire' : 'chasseur');
+      return;
+    }
+    if (this.suite === 'nuit' && this.chasseurAuReveil && this.vivants.size) {
+      this.attendreNuit();
       return;
     }
     const loups = [...this.vivants].filter(id => this.cartes.get(id) === 'loups').length;
@@ -294,6 +321,7 @@ export class Partie {
   }
 
   eliminerAuVote(id) {
+    this.revelationVote = { numero: this.numero, nom: this.nom(id), role: this.cartes.get(id) };
     this.annoncer('resultat-vote', `${this.nom(id)} a été éliminé par le village.`);
     this.eliminer([[id, 'vote']], 'nuit');
   }
@@ -341,6 +369,21 @@ export class Partie {
       return;
     }
     if (type === 'sorciere') {
+      if (choix?.potion) {
+        if (choix.potion !== this.potionAttendue()) throw new Error('Cette potion n’est plus disponible à cette étape.');
+        if (choix.potion === 'soin') {
+          if (typeof choix.utiliser !== 'boolean') throw new Error('Confirme ton choix de potion de soin.');
+          if (choix.utiliser) { this.potions.soin = false; this.victimeLoups = null; }
+          if (this.potions.poison) { this.ouvrirPoison(); return; }
+        } else {
+          if (!this.potions.poison || (choix.cible !== null && !cibles.includes(choix.cible))) {
+            throw new Error('Choix de potion de poison invalide.');
+          }
+          if (choix.cible) { this.potions.poison = false; this.poison = choix.cible; }
+        }
+        this.terminerRoleNocturne(type);
+        return;
+      }
       if (typeof choix?.soin !== 'boolean' ||
           (choix.soin && (!this.potions.soin || !this.victimeLoups)) ||
           (choix.poison !== null && (!this.potions.poison || !cibles.includes(choix.poison)))) {
@@ -436,23 +479,36 @@ export class Partie {
     const nuit = this.config.ordre.includes(type);
     const choix = phasesDeChoix.has(type);
     const { preparation, echeance, duree, debut } = this.tour;
+    const hote = id === this.config.hote;
+    const annonceLue = preparation && this.config.narration ? this.annonces[this.annonceLue - 1] : undefined;
+    const annoncesDiffusables = Math.max(this.tour.annonceDepuis, this.annonceLue ?? 0);
+    const annonces = preparation && this.config.annoncesEliminations
+      ? this.annonces.map(annonce => {
+        if (annonce.id > annoncesDiffusables && annonce.fichier?.startsWith('elimination-')) {
+          return hote ? { id: annonce.id, fichier: annonce.fichier } : { id: annonce.id };
+        }
+        return annonce;
+      })
+      : this.annonces;
     let temps;
-    if (!choix || concerne || id === this.config.hote) {
-      if (preparation) temps = { attente: true, duree, phase: numero, annonce: id === this.config.hote ? preparation.annonce : undefined };
+    if (!choix || concerne || hote) {
+      if (preparation) temps = { attente: true, duree, phase: numero, annonce: hote ? preparation.annonce : undefined };
       else if (echeance) temps = { echeance, pauseDepuis: this.pauseDepuis };
-      if (temps && choix && concerne && duree) temps.choix = true;
+      if (temps && choix && concerne && duree && !preparation) temps.choix = true;
     }
     return {
       id: this.id, jour: this.jour, maire: this.maire, marqueCorbeau: this.marqueCorbeau ?? null, vivants: [...this.vivants],
-      phase: nuit && !concerne ? 'nuit' : type, pause: this.pause,
+      phase: nuit && (!concerne || preparation) ? 'nuit' : type, pause: this.pause,
       temps, attendAnnonce: Boolean(preparation),
       narrationActive: this.config.narration === true,
       narrationObligatoire: this.config.narrationObligatoire === true,
-      annonceLue: preparation && this.config.narration ? this.annonces[this.annonceLue - 1]?.fichier : undefined,
+      annonceLue: annonceLue?.fichier,
+      messageEliminationLue: annonceLue?.fichier?.startsWith('elimination-') ? annonceLue.message : undefined,
+      revelationVote: preparation ? undefined : this.revelationVote,
       chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
         arrete: type === 'fin' ? debut : this.pauseDepuis },
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
-      numero: peutAgir ? numero : undefined, gagnant: this.gagnant, annonces: this.annonces, annonceDepuis: id === this.config.hote ? this.tour.annonceDepuis : undefined,
+      numero: peutAgir ? numero : undefined, gagnant: this.gagnant, annonces, annonceDepuis: hote ? this.tour.annonceDepuis : undefined,
       progression: ['distribution', 'election', 'vote'].includes(type)
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),
@@ -464,6 +520,7 @@ export class Partie {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,
         ...(this.tour.revelationAttendue && { revelationAttendue: true }),
         ...(type === 'sorciere' && {
+          potion: this.potionAttendue(),
           soin: this.potions.soin && Boolean(this.victimeLoups),
           poison: this.potions.poison,
           victime: this.nom(this.victimeLoups),

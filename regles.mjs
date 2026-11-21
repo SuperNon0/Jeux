@@ -12,6 +12,19 @@ export const roles = Object.freeze({
   ancien: { nom: 'Ancien', camp: 'village' },
 });
 
+export const prenoms = Object.freeze({
+  noe: 'Noë', julien: 'Julien', mael: 'Maël', marine: 'Marine', batiste: 'Batiste',
+  melissa: 'Mélissa', gabi: 'Gabi', enzo: 'Enzo', clara: 'Clara',
+});
+
+export function annonceElimination(nom, role) {
+  const prenom = Object.keys(prenoms).find(cle => prenoms[cle] === nom);
+  const nomRole = role === 'loups' ? 'Loup-Garou' : roles[role].nom;
+  const message = `${nom} a perdu la vie. Son rôle était ${nomRole}.`;
+  return { fichier: `elimination-${prenom ?? 'role'}-${role}`, message,
+    texte: prenom ? message : `Le rôle révélé était ${nomRole}.` };
+}
+
 export const ordreParDefaut = Object.freeze(['cupidon', 'voyante', 'salvateur', 'loups', 'sorciere', 'corbeau']);
 
 export function ordreDeNuit(composition, ordre = ordreParDefaut.filter(role => composition[role] > 0)) {

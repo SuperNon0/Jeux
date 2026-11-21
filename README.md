@@ -40,7 +40,7 @@ EnvironmentFile=/etc/jeux-cloudflare.env
 Applique avec `systemctl daemon-reload && systemctl restart jeux`. Le jeu contacte le domaine de l’équipe pour récupérer les clés de signature. Vérifie ensuite les deux liens dans des fenêtres privées séparées.
 
 - **Lien hôte**. Cloudflare demande l’e-mail. Après connexion, le site affiche Administration et permet de créer un salon.
-- **Lien invité**. Ouvre le QR code créé par l’hôte. Le formulaire de pseudo s’affiche sans demande d’e-mail.
+- **Lien invité**. Ouvre le QR code créé par l’hôte et choisis ton prénom dans la liste, sans demande d’e-mail.
 - **Diagnostic**. Depuis le LXC, `curl -fsS http://127.0.0.1:3000/sante` indique la version et l’état du service. Avec Cloudflare activé, ouvre le site via l’un des deux sous-domaines. Un code 421 sur l’un de ces liens indique généralement que le nom d’hôte transmis à Jeux diffère de celui configuré.
 
 [Documentation Cloudflare Access et Tunnel](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/)
@@ -108,7 +108,9 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - L’hôte clique sur **Tirer les cartes**. Chaque joueur retourne sa carte et confirme **Je suis prêt**. L’hôte lance alors la partie, active le son et attend la fin du compte à rebours de 10 secondes.
 - La Voyante choisit une cible, consulte sa carte en privé, puis confirme **J’ai vu la carte** avant l’annonce de fin de tour.
 - L’élection du maire est activée par défaut dans le formulaire. Elle a lieu après le premier débat et avant le vote d’élimination.
-- Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Le résultat s’affiche et l’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
+- Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Chaque joueur peut retourner la carte de la personne éliminée. L’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
+- Quand le Chasseur est éliminé par le vote, son dernier tir a lieu au réveil suivant. S’il est tué par les loups, il tire au réveil de la même nuit. Dans les deux cas, son choix s’ouvre après l’annonce du Chasseur et avant le débat.
+- La Sorcière décide d’abord si elle utilise son soin quand il est disponible. Elle peut ensuite choisir une cible pour son poison ou le garder. Chaque choix dispose de son propre chronomètre.
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
 
 En cas d’égalité au vote des loups, le serveur tire au sort entre les cibles arrivées en tête. Sans maire, un vote d’élimination à égalité est relancé entre les candidats arrivés en tête. Si l’égalité persiste, l’hôte peut relancer le vote ou tirer au sort. Le village gagne une fois le dernier loup éliminé. Les loups gagnent lorsqu’ils sont au moins aussi nombreux que les autres survivants, sauf si un couple de camps opposés est encore en jeu.
@@ -138,7 +140,9 @@ Une pause de 2 secondes sépare les annonces. Le mode discret joue les transitio
 
 ### Pistes fournies
 
-Les 44 annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
+Les annonces utilisent la voix française Tom de Piper et un niveau sonore harmonisé. Le jeu fournit aussi un croassement synthétique. Une annonce importée ou associée dans Administration garde la priorité sur la piste fournie.
+
+Dans les nouveaux salons, le prénom et le rôle sont annoncés après une élimination confirmée. Les 81 combinaisons prénom-rôle et les neuf pistes de rôle pour les bots figurent dans le [catalogue des annonces](public/annonces.json).
 
 | Nom du fichier | Phrase ou son |
 | --- | --- |
@@ -195,3 +199,4 @@ Le test d’import audio utilise `ffmpeg`.
 ```sh
 npm test
 ```
+- Dans les nouveaux salons, chaque personne choisit un prénom distinct parmi Noë, Julien, Maël, Marine, Batiste, Mélissa, Gabi, Enzo et Clara. Des bots peuvent occuper les places libres.
