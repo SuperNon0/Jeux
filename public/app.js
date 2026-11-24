@@ -323,7 +323,7 @@ function actualiser(nouveau) {
     } else if (lecture && precedente?.pause) reprendrePiste?.();
     else pisteSuivante();
   }
-  const maire = precedente?.id === partie?.id && recentes.findLast(a => ['maire-elu', 'nouveau-maire'].includes(a.fichier));
+  const maire = precedente?.id === partie?.id && recentes.findLast(a => a.fichier === 'nouveau-maire');
   if (maire && !interfaceJoueur() && !partie?.attendAnnonce) {
     nomination.querySelector('span').textContent = maire.message;
     nomination.hidden = false;
@@ -587,7 +587,11 @@ function choixJoueurs(p) {
       <label class="cible"><input type="radio" required name="cible" value="${id}" ${choixCible.valeur === id ? 'checked' : ''}>
       <span class="avatar">${echapper(initiales(etiquette(id)))}</span><strong>${echapper(etiquette(id))}${id === etat.joueur ? ' <small>· Toi</small>' : ''}</strong>
       ${p.maire === id ? medaille : ''}
-      ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}</fieldset>
+      ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}
+      ${p.action.peutPasserVote ? `<label class="cible">
+        <input type="radio" required name="cible" value="passer" ${choixCible.valeur === 'passer' ? 'checked' : ''}>
+        <span class="avatar">${icone('chev', 18)}</span><strong>Passer le vote <small>· À la majorité</small></strong>
+      </label>` : ''}</fieldset>
     <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : (nuit?.bouton ?? textes[p.phase] ?? 'Valider')}</button>
     ${nuit?.passer ? action(nuit.passer, 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
 }
@@ -730,10 +734,12 @@ function vuePhase(p) {
     </section>`;
   }
   if (p.attendAnnonce) {
+    const texteAudio = ['maire-elu', 'aucun-vote-maire'].includes(p.annonceLue) ? '' : p.sousTitre;
     return `<section class="panneau phase phase-annonce">
       <div class="phase-entete"><span class="embleme">${icone(p.pause ? 'clock' : 'bell', 24)}</span><div>
-        <span class="lbl-mono">Narration</span><h2 class="ttl" aria-live="polite">${echapper(p.sousTitre || 'En attente de l’annonce')}</h2>
+        <span class="lbl-mono">Narration</span><h2 class="ttl" aria-live="polite">${echapper(p.resultatElection || p.sousTitre || 'En attente de l’annonce')}</h2>
       </div></div>
+      ${p.resultatElection && texteAudio ? `<p class="soft" aria-live="polite">${echapper(texteAudio)}</p>` : ''}
       ${p.pause ? '<p class="notice">Partie en pause</p>' : ''}
       ${etat.anime ? `<div class="actions">${action(p.pause ? 'Reprendre' : 'Mettre en pause',
         p.pause ? 'play' : 'clock', p.pause ? 'reprendre' : 'pause', 'gh')}</div>` : ''}
@@ -760,8 +766,7 @@ function vuePhase(p) {
   const progression = p.progression;
   const bulletinSimple = interfaceJoueur() && p.phase === 'vote' && p.action;
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
-    p.phase === 'vote' ? ['maire-elu', 'nouveau-maire'].includes(a.fichier) :
-    p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination'].includes(a.fichier) : false));
+    p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination', 'vote-passe'].includes(a.fichier) : false));
   const ancien = p.phase === 'debat'
     ? p.annonces.slice(p.annonces.findLastIndex(a => a.fichier === 'le-village-se-reveille')).find(a => a.fichier === 'ancien-survit')
     : null;
@@ -770,6 +775,7 @@ function vuePhase(p) {
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
       <span class="lbl-mono">${label}</span><h2 class="ttl">${titre} ${aide('phase', titre, texte)}</h2></div>
     </div>
+    ${p.resultatElection ? `<p class="notice">${icone('list', 16)}${echapper(p.resultatElection)}</p>` : ''}
     ${derniere && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(derniere.message)}</div>` : ''}
     ${ancien ? `<div class="notice">${icone('shield', 16)}${echapper(ancien.message)}</div>` : ''}
     ${p.marqueCorbeau && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(etiquette(p.marqueCorbeau))} reçoit deux voix au premier vote d’élimination.</div>` : ''}
@@ -811,7 +817,10 @@ function partie() {
       <div class="tirage-cartes" aria-hidden="true">${art('dos')}${art('dos')}${art('dos')}</div>
     </section>`;
   }
-  const contenu = zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : vuePhase(p);
+  const revelation = p.revelationPrivee;
+  const decouverte = revelation ? `<p class="notice" role="status">${icone('lock', 18)}
+    <span>Tu as dormi chez <strong>${echapper(revelation.nom)}</strong>. Son rôle était <strong>${echapper(revelation.role)}</strong>.</span></p>` : '';
+  const contenu = zone === 'carte' ? carte(p) : zone === 'journal' ? journal(p) : decouverte + vuePhase(p);
   if (zone === 'carte' && p.phase === 'distribution') return contenu;
   if (interfaceJoueur()) {
     return `${entetePage(zones[zone][0], p.jour ? `Tour ${p.jour}` : '')}

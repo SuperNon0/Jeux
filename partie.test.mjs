@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { test } from 'node:test';
 import { Partie, verifierConfiguration } from './partie.mjs';
-import { annonceElimination, prenoms, roles } from './regles.mjs';
+import { annonceElimination, prenoms, roles, votePasse } from './regles.mjs';
 import { phrasesAttendues } from './outils/catalogue.mjs';
 
 async function horlogeDeTest(t) {
@@ -153,13 +153,33 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.deepEqual((await etat(chasseur)).partie.historique, []);
 
   await agir(hote, null, 'debat');
+  const appelElection = (await etat(hote)).partie;
+  assert.deepEqual(appelElection.annonces.slice(appelElection.annonceDepuis).map(a => a.fichier), ['election-maire']);
+  assert.equal((await etat(villageois)).partie.action, null);
   for (const [i, client] of clients.entries()) {
     await agir(client, [chasseur, chasseur, villageois, villageois, loups][i].joueur, 'election');
   }
   await agir(hote, 'revoter', 'egaliteElection');
   for (const client of clients) await agir(client, chasseur.joueur, 'election');
+  const transition = (await etat(hote)).partie;
+  const annoncesVote = transition.annonces.slice(transition.annonceDepuis);
+  assert.deepEqual(annoncesVote.map(a => a.fichier), ['maire-elu', 'fin-debat', 'vote-elimination']);
+  const elu = (await etat(villageois)).joueurs.find(({ id }) => id === chasseur.joueur);
+  const messageMaire = `${elu.nom} a été élu maire.`;
+  const pendantAnnonce = (await etat(villageois)).partie;
+  assert.equal(pendantAnnonce.resultatElection, messageMaire);
+  assert.equal(pendantAnnonce.action, null);
+  assert.equal(pendantAnnonce.temps.attente, true);
+  for (const { id: annonce } of annoncesVote.slice(0, -1)) {
+    await appelHote('chronometre', { partieId: transition.id, annonce });
+    assert.equal((await etat(villageois)).partie.action, null);
+  }
   await annonces();
-  assert.equal((await etat(villageois)).partie.maire, chasseur.joueur);
+  const bulletin = (await etat(villageois)).partie;
+  assert.equal(bulletin.maire, chasseur.joueur);
+  assert.equal(bulletin.resultatElection, messageMaire);
+  assert.equal(bulletin.action.peutPasserVote, true);
+  assert.ok(bulletin.temps.echeance);
 
   await agir(chasseur, villageois.joueur, 'vote');
   await agir(villageois, chasseur.joueur, 'vote');
@@ -234,6 +254,66 @@ function jouer(partie, id, choix = null) {
 function finirVoteAvecAbstentions(partie) {
   partie.passer(partie.tour.acteurs.filter(id => !partie.tour.reponses.has(id)));
 }
+
+test('trois joueurs sur cinq peuvent passer le premier vote malgré le maire et le Corbeau', () => {
+  const partie = partieAvecRoles({
+    Alice: 'villageois', Bastien: 'corbeau', Camille: 'ancien',
+    Diane: 'loups', Élie: 'villageois',
+  }, { maire: true });
+  jouer(partie, 'Diane', 'Camille');
+  jouer(partie, 'Bastien', 'Élie');
+  jouer(partie, 'Alice');
+  assert.equal(partie.vue('Alice').phase, 'election');
+  assert.equal(partie.vue('Alice').action.peutPasserVote, undefined);
+  assert.throws(() => jouer(partie, 'Alice', votePasse), /joueur disponible/);
+  const vivants = partie.vue('Alice').vivants;
+  for (const id of vivants) jouer(partie, id, 'Alice');
+  assert.equal(partie.vue('Alice').action.peutPasserVote, true);
+  assert.equal(partie.vue('Alice').marqueCorbeau, 'Élie');
+  for (const id of ['Bastien', 'Camille', 'Diane']) jouer(partie, id, votePasse);
+  jouer(partie, 'Alice', 'Camille');
+  assert.equal(partie.vue('Alice').phase, 'vote');
+  jouer(partie, 'Élie', 'Camille');
+  assert.equal(partie.vue('Alice').phase, 'attenteNuit');
+  assert.equal(partie.vue('Alice').jour, 1);
+  assert.deepEqual(partie.vue('Alice').vivants, vivants);
+  assert.equal(partie.vue('Alice').marqueCorbeau, null);
+  assert.equal(partie.annonces.at(-1).fichier, 'vote-passe');
+
+  jouer(partie, 'Alice');
+  jouer(partie, 'Diane', 'Camille');
+  jouer(partie, 'Bastien', 'Élie');
+  jouer(partie, 'Alice');
+  assert.equal(partie.vue('Alice').jour, 2);
+  assert.equal(partie.vue('Alice').resultatElection, undefined);
+  assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['fin-debat', 'vote-elimination']);
+  assert.equal(partie.vue('Alice').action.peutPasserVote, undefined);
+  assert.throws(() => jouer(partie, 'Alice', votePasse), /joueur disponible/);
+});
+
+test('les bulletins pour passer ne comptent pas contre les joueurs et n’entrent pas au second tour', () => {
+  const cartes = { Alice: 'villageois', Bastien: 'ancien', Camille: 'loups',
+    Diane: 'villageois', Élie: 'villageois' };
+  const partie = partieAvecRoles(cartes);
+  jouer(partie, 'Camille', 'Bastien');
+  jouer(partie, 'Alice');
+  jouer(partie, 'Alice', 'Diane');
+  jouer(partie, 'Bastien', 'Élie');
+  for (const id of ['Camille', 'Diane']) jouer(partie, id, votePasse);
+  finirVoteAvecAbstentions(partie);
+  assert.equal(partie.tour.relance, true);
+  assert.deepEqual(partie.vue('Alice').action.cibles, ['Diane', 'Élie']);
+  assert.equal(partie.vue('Alice').action.peutPasserVote, undefined);
+  assert.throws(() => jouer(partie, 'Alice', votePasse), /joueur disponible/);
+
+  const delai = partieAvecRoles(cartes, { voteSecondes: 30 });
+  jouer(delai, 'Camille', 'Bastien');
+  jouer(delai, 'Alice');
+  jouer(delai, 'Alice', votePasse);
+  jouer(delai, 'Bastien', votePasse);
+  delai.actualiserTemps(delai.tour.echeance);
+  assert.equal(delai.annonces.at(-1).fichier, 'aucun-vote-elimination');
+});
 
 test('une élimination annonce le prénom et le rôle au bon moment, même avant le tir du Chasseur', () => {
   const partie = partieAvecRoles({
@@ -883,7 +963,7 @@ test('les annonces nocturnes suivent les phases et restent disponibles dans l’
     ['fin-sorciere', 'le-village-se-reveille', 'nuit-sans-victime', 'debut-debat']);
   agir('Alice');
   partie.terminerTour();
-  assert.equal(partie.annonces.at(-2).fichier, 'aucun-vote-maire');
+  assert.deepEqual(partie.annonces.slice(-3).map(a => a.fichier), ['aucun-vote-maire', 'fin-debat', 'vote-elimination']);
   partie.terminerTour();
   const fichiers = await readdir(new URL('./public/audio/', import.meta.url));
   for (const { fichier } of partie.annonces) assert.ok(fichiers.includes(fichier + '.mp3'), fichier);
@@ -992,7 +1072,7 @@ test('le Corbeau peut ne marquer personne', () => {
   assert.ok(!partie.annonces.some(a => ['cri-corbeau', 'marque-corbeau'].includes(a.fichier)));
 });
 
-test('un rôle mort ou sans pouvoir est quand même appelé, sauf en narration discrète', () => {
+test('la Voyante morte est appelée en narration classique, jamais en mode discret', () => {
   const cartes = { Alice: 'villageois', Bastien: 'voyante', Camille: 'sorciere', Diane: 'loups', Élie: 'villageois', Félix: 'villageois' };
   const partie = partieAvecRoles(cartes);
   jouer(partie, 'Bastien', 'Alice');
@@ -1024,6 +1104,26 @@ test('un rôle mort ou sans pouvoir est quand même appelé, sauf en narration d
   finirVoteAvecAbstentions(discret);
   jouer(discret, 'Alice');
   assert.equal(discret.tour.type, 'loups');
+});
+
+test('le Gardien ne reçoit plus d’appel après sa mort', () => {
+  const partie = partieAvecRoles({
+    Alice: 'villageois', Camille: 'villageois', Diane: 'loups', Élie: 'villageois', Félix: 'salvateur',
+  });
+  assert.equal(partie.annonces.at(-1).fichier, 'salvateur');
+  jouer(partie, 'Félix', 'Camille');
+  assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['fin-salvateur', 'loups']);
+  jouer(partie, 'Diane', 'Félix');
+  assert.ok(!partie.vivants.has('Félix'));
+  jouer(partie, 'Alice');
+  finirVoteAvecAbstentions(partie);
+
+  const debut = partie.annonces.length;
+  jouer(partie, 'Alice');
+  assert.equal(partie.tour.type, 'loups');
+  jouer(partie, 'Diane', 'Élie');
+  assert.deepEqual(partie.annonces.slice(debut).map(a => a.fichier),
+    ['le-village-sendort', 'loups', 'fin-loups', 'le-village-se-reveille', 'nuit-avec-victimes', 'debut-debat']);
 });
 
 test('une Sorcière sans potion est appelée pour la forme', () => {

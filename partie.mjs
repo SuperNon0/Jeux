@@ -1,10 +1,10 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { annonceElimination, candidatsEnTete, ordreDeNuit, roles, tirerAuSort } from './regles.mjs';
+import { annonceElimination, candidatsEnTete, ordreDeNuit, roles, tirerAuSort, votePasse } from './regles.mjs';
 import { rolesHistoriques } from './public/loup-garou/roles/index.mjs';
 
 export const delaiForcage = 45_000;
 export const delaiRevelation = 20_000;
-// Un rôle mort ou sans pouvoir est quand même appelé, pour que le silence ne trahisse rien.
+// Certains rôles morts ou sans pouvoir sont quand même appelés.
 export const dureeAppelFactice = [8, 14];
 
 // Rôles ajoutés par fichier : leur pouvoir passe par les crochets décrits dans public/loup-garou/roles/.
@@ -232,6 +232,7 @@ export class Partie {
       const regle = roles[role];
       if (regle.nuit.premiereNuitSeulement && this.jour !== 1) continue;
       const acteurs = [...this.vivants].filter(id => this.cartes.get(id) === role);
+      if (role === 'salvateur' && !acteurs.length) continue;
       const cibles = this.ciblesDeNuit(role, acteurs);
       const actif = acteurs.length && cibles.length &&
         !(role === 'sorciere' && !this.potions.poison && (!this.potions.soin || !this.victimeLoups)) &&
@@ -308,7 +309,6 @@ export class Partie {
   attendreNuit() { this.phase('attenteNuit', this.animateurs(), []); }
 
   ouvrirVote() {
-    this.annoncer('fin-debat');
     if (this.config.maire && !this.maire) this.vote('election');
     else this.voteElimination();
   }
@@ -318,7 +318,14 @@ export class Partie {
     this.tour.relance = fichier === 'second-tour';
   }
 
-  voteElimination() { this.vote('vote'); }
+  voteElimination() {
+    this.annoncer('fin-debat');
+    this.vote('vote');
+  }
+
+  peutPasserVote() {
+    return this.tour.type === 'vote' && this.jour === 1 && !this.tour.relance;
+  }
 
   elire(id, succession = false) {
     this.maire = id;
@@ -470,7 +477,8 @@ export class Partie {
       return;
     }
     const protectionPassee = Boolean(roles[type]?.nuit?.passer) && choix === null;
-    if (cibles.length && !protectionPassee && (!cibles.includes(choix) || (type === 'voyante' && choix === id))) {
+    const passageDuVote = choix === votePasse && this.peutPasserVote();
+    if (cibles.length && !protectionPassee && !passageDuVote && (!cibles.includes(choix) || (type === 'voyante' && choix === id))) {
       throw new Error('Choisis un joueur disponible.');
     }
     reponses.set(id, choix);
@@ -526,11 +534,20 @@ export class Partie {
       }
       case 'vote': {
         const marque = !this.tour.relance && this.vivants.has(this.marqueCorbeau) ? this.marqueCorbeau : null;
+        const voixPourPasser = this.peutPasserVote()
+          ? this.tour.acteurs.filter(acteur => reponses.get(acteur) === votePasse).length : 0;
+        if (voixPourPasser > this.tour.acteurs.length / 2) {
+          this.marqueCorbeau = null;
+          this.annoncer('vote-passe', 'Le village a choisi de passer le vote. Personne n’est éliminé.');
+          this.attendreNuit();
+          break;
+        }
+        const bulletins = new Map([...reponses].map(([id, cible]) => [id, cible === votePasse ? null : cible]));
         const bonus = {};
         for (const [, surVote] of crochets('surVote')) {
-          for (const [cible, voix] of Object.entries(surVote(this, reponses) ?? {})) bonus[cible] = (bonus[cible] ?? 0) + voix;
+          for (const [cible, voix] of Object.entries(surVote(this, bulletins) ?? {})) bonus[cible] = (bonus[cible] ?? 0) + voix;
         }
-        const premiers = candidatsEnTete(reponses, this.maire, marque, bonus);
+        const premiers = candidatsEnTete(bulletins, this.maire, marque, bonus);
         this.marqueCorbeau = null;
         if (!premiers.length) {
           this.annoncer('aucun-vote-elimination', 'Aucun vote reçu. Personne n’est éliminé.');
@@ -562,6 +579,7 @@ export class Partie {
 
   vue(id) {
     const { type, numero, acteurs, cibles, reponses } = this.tour;
+    const role = this.cartes.get(id);
     const concerne = acteurs.includes(id) && (!reponses.has(id) || type === 'loups');
     const peutAgir = concerne && !this.pause && !this.tour.preparation;
     const nuit = this.config.ordre.includes(type);
@@ -578,6 +596,8 @@ export class Partie {
         return annonce;
       })
       : this.annonces;
+    const resultatElection = type === 'vote' ? annonces.findLast(a => a.id > this.tour.annonceDepuis &&
+      ['maire-elu', 'aucun-vote-maire'].includes(a.fichier))?.message : undefined;
     let temps;
     if (!choix || concerne || hote) {
       if (preparation) temps = { attente: true, duree, phase: numero, annonce: hote ? preparation.annonce : undefined };
@@ -587,7 +607,7 @@ export class Partie {
     return {
       id: this.id, jour: this.jour, maire: this.maire, marqueCorbeau: this.marqueCorbeau ?? null, vivants: [...this.vivants],
       phase: nuit && (!concerne || preparation) ? 'nuit' : type, pause: this.pause,
-      temps, attendAnnonce: Boolean(preparation),
+      temps, attendAnnonce: Boolean(preparation), resultatElection,
       narrationActive: this.config.narration === true,
       narrationObligatoire: this.config.narrationObligatoire === true,
       annonceLue: annonceLue?.fichier,
@@ -601,12 +621,14 @@ export class Partie {
         ? { reponses: reponses.size, total: acteurs.length } : undefined,
       aRepondu: !nuit && reponses.has(id),
       bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
-      infoRole: roles[this.cartes.get(id)]?.info?.(this, id),
-      role: this.cartes.get(id), amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
-      allies: this.cartes.get(id) === 'loups'
+      infoRole: roles[role]?.info?.(this, id),
+      revelationPrivee: preparation ? undefined : roles[role]?.revelationPrivee?.(this, id),
+      role, amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
+      allies: role === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,
+        ...(this.peutPasserVote() && { peutPasserVote: true }),
         ...(this.tour.revelationAttendue && { revelationAttendue: true }),
         ...(roles[type]?.vue && { info: roles[type].vue(this, id) }),
         ...(type === 'loups' && {

@@ -3,6 +3,7 @@ import { randomInt } from 'node:crypto';
 import { roles } from './public/loup-garou/roles/index.mjs';
 
 export { roles };
+export const votePasse = 'passer';
 
 export const prenoms = Object.freeze({
   noe: 'Noë', julien: 'Julien', mael: 'Maël', marine: 'Marine', batiste: 'Batiste',

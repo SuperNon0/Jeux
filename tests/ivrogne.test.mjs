@@ -41,6 +41,25 @@ test('attaqué pendant qu’il dort ailleurs, l’Ivrogne survit', () => {
   assert.ok(p.annonces.some(a => a.fichier === 'nuit-sans-victime'));
 });
 
+test('avec deux loups, l’Ivrogne qui dort chez l’un d’eux meurt au réveil avec la victime de la meute', () => {
+  const p = partie({
+    Alice: 'villageois', Bastien: 'ivrogne', Camille: 'villageois', Diane: 'loups',
+    Élie: 'villageois', Félix: 'salvateur', Gabi: 'loups',
+  });
+  jouer(p, 'Félix', null);
+  jouer(p, 'Bastien', 'Gabi');
+  assert.ok(p.vivants.has('Bastien'));
+  jouer(p, 'Diane', 'Camille');
+  assert.ok(p.vivants.has('Bastien'));
+  jouer(p, 'Gabi', 'Camille');
+  assert.ok(!p.vivants.has('Bastien'));
+  assert.ok(!p.vivants.has('Camille'));
+  assert.ok(p.vivants.has('Gabi'));
+  assert.deepEqual(p.annonces.slice(-3).map(a => a.fichier),
+    ['le-village-se-reveille', 'nuit-avec-victimes', 'debut-debat']);
+  assert.equal(p.annonces.at(-2).message, 'Élimination de nuit · Camille, Bastien');
+});
+
 test('si les loups dévorent son hôte, l’Ivrogne meurt avec lui', () => {
   const p = partie();
   nuit(p, { hote: 'Camille', cible: 'Camille' });
@@ -77,7 +96,29 @@ test('l’Ivrogne ne retourne pas chez la même personne deux nuits de suite', (
 
 test('au réveil, l’Ivrogne découvre le rôle de son hôte', () => {
   const p = partie();
-  nuit(p, { hote: 'Félix', cible: 'Élie' });
+  p.config.narration = true;
+  jouer(p, 'Félix');
+  p.demarrerChrono();
+  jouer(p, 'Bastien', 'Félix');
+  p.demarrerChrono();
+  assert.equal(p.vue('Bastien').revelationPrivee, undefined);
+
+  jouer(p, 'Diane', 'Élie');
+  assert.equal(p.vue('Bastien').attendAnnonce, true);
+  assert.equal(p.vue('Bastien').revelationPrivee, undefined);
+  p.demarrerChrono();
+  const decouverte = { nuit: 1, nom: 'Félix', role: 'Gardien' };
+  assert.deepEqual(p.vue('Bastien').revelationPrivee, decouverte);
   assert.match(p.vue('Bastien').infoRole, /nuit 1, Félix : Gardien/);
-  assert.equal(p.vue('Camille').infoRole, undefined);
+  for (const autre of ['Alice', 'Camille', 'Félix']) {
+    assert.equal(p.vue(autre).revelationPrivee, undefined);
+    assert.equal(p.vue(autre).infoRole, undefined);
+  }
+
+  const rechargee = Partie.charger(JSON.parse(JSON.stringify(p.sauvegarde())), p.joueurs, p.config);
+  assert.deepEqual(rechargee.vue('Bastien').revelationPrivee, decouverte);
+  rechargee.nuit();
+  rechargee.demarrerChrono();
+  assert.equal(rechargee.vue('Bastien').revelationPrivee, undefined);
+  assert.match(rechargee.vue('Bastien').infoRole, /nuit 1, Félix : Gardien/);
 });

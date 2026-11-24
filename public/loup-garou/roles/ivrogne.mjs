@@ -1,5 +1,5 @@
-// Ivrogne : chaque nuit, il va finir la soirée chez quelqu’un. Absent de chez lui, il échappe aux loups,
-// mais si les loups dévorent son hôte, il meurt avec lui.
+// L’Ivrogne échappe à l’attaque de la meute quand il dort ailleurs. Il meurt s’il dort chez un loup
+// ou si la meute dévore son hôte.
 // Chaque crochet reçoit `partie` (voir partie.mjs) : partie.vivants, partie.cartes, partie.nom(id),
 // partie.etatRole('ivrogne') pour la mémoire du rôle.
 const etatIvrogne = partie => partie.etatRole('ivrogne');
@@ -8,13 +8,14 @@ export default {
   id: 'ivrogne',
   nom: 'Ivrogne',
   camp: 'village',
-  pouvoir: 'Chaque nuit, tu peux aller finir la soirée chez quelqu’un et tu découvres son rôle. Si les loups t’attaquent chez toi, tu n’y es pas. Si les loups dévorent ton hôte, tu meurs avec lui.',
+  pouvoir: 'Chaque nuit, tu peux dormir chez quelqu’un et découvrir son rôle. Ta maison vide te protège de l’attaque des loups. Tu meurs si tu dors chez un Loup-Garou ou si la meute dévore ton hôte.',
   explication: [
     'Chaque nuit, avant les loups, le narrateur t’appelle et tu choisis chez qui tu vas boire un dernier verre. Tu peux aussi rester chez toi.',
     'Tu ne peux pas retourner chez la même personne deux nuits de suite.',
-    'Si les loups t’attaquent alors que tu dors ailleurs, ils trouvent ta maison vide : tu survis et personne ne meurt de leur attaque.',
+    'Si la meute vise ta maison pendant que tu dors ailleurs, elle la trouve vide. Son attaque ne fait alors aucune victime.',
+    'Si tu choisis un Loup-Garou comme hôte, tu meurs au réveil, quelle que soit la cible de la meute.',
     'Si les loups dévorent la personne chez qui tu dors, tu meurs avec elle. Si le Gardien ou la Sorcière la sauve, tu es sauvé aussi.',
-    'Au réveil, tu découvres le rôle de la personne chez qui tu as dormi. Il reste noté sous ta carte pour toute la partie.',
+    'Au réveil, le rôle de ton hôte apparaît sur ton écran de partie. Tu peux le retrouver sous ta carte.',
     'Si tu restes chez toi, tu ne découvres rien et tu es un simple membre du village pour la nuit. Tu gagnes avec le village.',
   ],
   art: { image: 'roles/ivrogne.png' },
@@ -53,22 +54,28 @@ export default {
       .filter(Boolean).join(' ');
   },
 
+  revelationPrivee(partie, joueur) {
+    const { ivrogne, decouvertes } = etatIvrogne(partie);
+    const derniere = decouvertes?.at(-1);
+    if (ivrogne === joueur && derniere?.nuit === partie.jour) return derniere;
+  },
+
   // Les loups visent l’Ivrogne pendant qu’il dort ailleurs : la maison est vide.
   surAttaque(partie, victime) {
     const { ivrogne, hote } = etatIvrogne(partie);
     return victime === ivrogne && Boolean(hote);
   },
 
-  // Les loups ont dévoré son hôte (sans protection ni soin) : l’Ivrogne meurt avec lui.
   auReveil(partie) {
     const etat = etatIvrogne(partie);
-    if (etat.hote && etat.hote === partie.victimeLoups && partie.vivants.has(etat.ivrogne)) {
+    const roleHote = partie.cartes.get(etat.hote);
+    if (etat.hote && (roleHote === 'loups' || etat.hote === partie.victimeLoups)) {
       partie.ajouterVictimeNuit(etat.ivrogne, 'loups');
     }
     // Au réveil, il se souvient de la carte de son hôte, même si les loups les emportent.
     if (etat.hote) {
       etat.decouvertes = [...(etat.decouvertes ?? []),
-        { nuit: partie.jour, nom: partie.nom(etat.hote), role: partie.nomRole(partie.cartes.get(etat.hote)) }];
+        { nuit: partie.jour, nom: partie.nom(etat.hote), role: partie.nomRole(roleHote) }];
     }
     etat.precedent = etat.hote ?? null;
     etat.hote = null;
