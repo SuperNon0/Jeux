@@ -127,7 +127,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 
 | Rôle | Pouvoir |
 | --- | --- |
-| Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre le nom de son partenaire sur son téléphone. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
+| Cupidon | Lie deux personnes la première nuit, lui compris s’il le choisit. Chacune découvre sur son téléphone le nom et la carte de son partenaire. Cupidon retrouve le couple sous sa carte. Si l’une meurt, l’autre meurt de chagrin. Un couple de camps opposés gagne s’il forme les deux derniers survivants. |
 | Gardien | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. Son identifiant technique reste `salvateur`. |
 | Enfant sauvage | Choisit un modèle la première nuit. Si ce modèle meurt, il devient Loup-Garou en secret et rejoint la meute dès la nuit suivante. |
 | Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Au réveil, le rôle de son hôte s’affiche sur son écran de partie et reste consultable sous sa carte. Absent, il échappe à une attaque contre sa maison. Il meurt s’il dort chez un Loup-Garou ou si la meute dévore son hôte. |

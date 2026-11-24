@@ -613,7 +613,10 @@ function verifierCouple(form) {
 }
 
 function lienAmoureux(p) {
-  return p.amoureux ? `<p class="notice">${icone('heart', 18)}<span>Tu es lié à <strong>${echapper(p.amoureux)}</strong>.</span></p>` : '';
+  if (!p.amoureux) return '';
+  const role = roles[p.roleAmoureux];
+  return `<div class="notice">${icone('heart', 18)}<span>Tu es lié à <strong>${echapper(p.amoureux)}</strong>${role ? `, qui est <strong>${role.nom}</strong>` : ''}.</span>
+    ${role ? action('Voir sa carte', 'eye', 'carte-amoureux', 'gh') : ''}</div>`;
 }
 
 function ciblesVoyante(p) {
@@ -1359,7 +1362,7 @@ function contenuFeuille(type, contexte) {
       const partie = etat.partie;
       const confirmation = partie.action?.revelationAttendue && partie.historique.at(-1) === contexte;
       return ['Carte révélée', `<section class="fiche-revelation">
-        ${pastille('Révélation privée', 'lock')}
+        ${pastille(contexte.amoureux ? 'Carte de ton amoureux' : 'Révélation privée', contexte.amoureux ? 'heart' : 'lock')}
         <p class="soft">${echapper(nom)}</p><h3 class="ttl">${roles[role].nom}</h3>
         ${art(role)}
         <p class="soft">Camp ${roles[role].camp}</p>
@@ -1708,6 +1711,11 @@ document.addEventListener('click', event => {
   if (id === 'revelation') {
     const revelation = etat?.partie?.historique[Number(cible.dataset.index)];
     if (revelation) ouvrirFeuille('revelation', revelation);
+    return;
+  }
+  if (id === 'carte-amoureux') {
+    const { amoureux: nom, roleAmoureux: role } = etat?.partie ?? {};
+    if (role) ouvrirFeuille('revelation', { nom, role, amoureux: true });
     return;
   }
   if (id === 'fermer') return fermerFeuille();

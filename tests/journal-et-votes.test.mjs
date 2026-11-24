@@ -121,3 +121,11 @@ test('un maire mort qui ne désigne personne à temps laisse le sort choisir son
   assert.ok(p.vivants.has(p.maire));
   assert.ok(p.annonces.some(a => a.fichier === 'tirage-au-sort'));
 });
+
+test('chaque amoureux connaît la carte de l’autre', () => {
+  const p = partie({ Noë: 'villageois', Julien: 'cupidon', Maël: 'loups', Marine: 'voyante', Clara: 'villageois' });
+  jouer(p, 'Julien', ['Maël', 'Marine']);
+  assert.equal(p.vue('Maël').roleAmoureux, 'voyante');
+  assert.equal(p.vue('Marine').roleAmoureux, 'loups');
+  assert.equal(p.vue('Noë').roleAmoureux, undefined);
+});

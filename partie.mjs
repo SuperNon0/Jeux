@@ -772,7 +772,9 @@ export class Partie {
       bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
       infoRole: roles[role]?.info?.(this, id),
       revelationPrivee: preparation ? undefined : roles[role]?.revelationPrivee?.(this, id),
-      role, amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
+      role, amoureux: this.nom(this.partenaireAmoureux(id)),
+      // Chaque amoureux connaît la carte de l’autre.
+      roleAmoureux: this.cartes.get(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
       allies: role === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
