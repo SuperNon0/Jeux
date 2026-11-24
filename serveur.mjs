@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import QRCode from 'qrcode';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { Partie, verifierConfiguration } from './partie.mjs';
-import { prenoms, votePasse } from './regles.mjs';
+import { modesPassage, porteesPassage, prenoms, votePasse } from './regles.mjs';
 
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
 const indexHtml = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8').replaceAll('__JEUX_VERSION__', version);
@@ -178,12 +178,14 @@ function actualiserPartie(salon, maintenant = Date.now()) {
         (!reponses.has(id) || (choixHumain !== undefined && reponses.get(id) !== choixHumain)));
       if (!bot) break;
       let choix;
-      if (partie.peutPasserVote()) {
+      // Les bots suivent les humains pour passer le vote ; ils ne décident jamais à la place du maire.
+      if (partie.peutPasserVote() && partie.modePassage() !== 'maire') {
         const humains = acteurs.filter(id => !estBot(salon, id));
         const voixPourPasser = humains.filter(id => reponses.get(id) === votePasse).length;
         const enAttente = humains.filter(id => !reponses.has(id)).length;
-        if (voixPourPasser > humains.length / 2) choix = votePasse;
-        else if (voixPourPasser + enAttente > humains.length / 2) break;
+        const seuil = partie.modePassage() === 'unanimite' ? humains.length - 0.5 : humains.length / 2;
+        if (humains.length && voixPourPasser > seuil) choix = votePasse;
+        else if (humains.length && voixPourPasser + enAttente > seuil) break;
       }
       partie.agir(bot, numero, choix ?? choixDuBot(salon, bot, type, cibles));
       change = true;
@@ -277,7 +279,12 @@ function duree(valeur = 0) {
 
 function reglagePartie(data) {
   const regles = verifierConfiguration(data.total, data.composition, data.ordre);
-  return { ...regles, maire: data.maire === true, discret: data.discret === true,
+  const passageVote = data.passageVote ?? 'majorite';
+  const passagePortee = data.passagePortee ?? 'premier';
+  if (!Object.hasOwn(modesPassage, passageVote) || !Object.hasOwn(porteesPassage, passagePortee)) {
+    throw new Error('Choisis comment le village peut passer le vote.');
+  }
+  return { ...regles, maire: data.maire === true, discret: data.discret === true, passageVote, passagePortee,
     debatSecondes: duree(data.debatSecondes ?? 120), voteSecondes: duree(data.voteSecondes ?? 60),
     roleSecondes: duree(data.roleSecondes ?? dureeRoleDefaut) };
 }
@@ -331,7 +338,10 @@ function vue(salon, joueur) {
     demo: salon.demo, horloge: Date.now(), son,
     joueurs: salon.joueurs.map(j => ({ ...j, bot: estBot(salon, j.id), enLigne: !salon.cloture && enLigne(salon, j.id) })),
     resume: resume(salon, joueur),
-    config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire, discret: salon.config.discret },
+    config: { composition: salon.config.composition, ordre: salon.config.ordre, maire: salon.config.maire, discret: salon.config.discret,
+      passageVote: salon.config.passageVote ?? 'majorite', passagePortee: salon.config.passagePortee ?? 'premier',
+      debatSecondes: salon.config.debatSecondes, voteSecondes: salon.config.voteSecondes, roleSecondes: salon.config.roleSecondes,
+      causesVisibles: salon.config.causesVisibles === true },
     partie: partie ?? null,
     demandes: hote && !salon.cloture ? [...salon.demandes.values()].filter(d => d.statut === 'attente' && Date.now() - d.date <= dureeReprise).map(({ id, joueur }) => ({
       id, nom: salon.joueurs.find(j => j.id === joueur).nom,
@@ -456,6 +466,24 @@ function gerer(salon, action, data, token, mode) {
   if (joueur !== salon.config.hote) throw Object.assign(new Error('Cette action est réservée à l’hôte.'), { status: 403 });
   if (['ajouterbot', 'retirerbot'].includes(action)) {
     modifierBots(salon, action, data.joueur);
+    return vue(salon, joueur);
+  }
+  if (action === 'reglages') {
+    if (salon.partie) throw erreurHttp(409, 'Modifie les réglages avant le tirage des cartes.');
+    if (salon.demo) throw new Error('La démo garde ses réglages.');
+    if (!Number.isInteger(data.total) || data.total < salon.joueurs.length) {
+      throw new Error(`Le salon compte déjà ${salon.joueurs.length} joueurs : retire des bots ou garde au moins ${salon.joueurs.length} places.`);
+    }
+    const avant = { config: salon.config, total: salon.total };
+    salon.config = { ...salon.config, ...reglagePartie(data) };
+    salon.total = data.total;
+    try { sauvegarder(); }
+    catch (incident) { Object.assign(salon, avant); throw incident; }
+    return vue(salon, joueur);
+  }
+  if (action === 'causes') {
+    salon.config.causesVisibles = data.visibles === true;
+    sauvegarder();
     return vue(salon, joueur);
   }
   if (action === 'cohote') {
@@ -596,6 +624,20 @@ async function admin(req, res, chemin, mode) {
       return { ...infos, hote: nom };
     }).sort((a, b) => b.activite - a.activite);
     return json(res, 200, { salons: liste, compositions, audios: await audiosAdmin(), stockageAudio: Boolean(dossierAudio), version, son, annonces: annoncesDisponibles, maintenance: await statutMaintenance() });
+  }
+  const suivi = chemin.match(/^\/api\/admin\/salons\/([A-HJ-NP-Z2-9]{6})\/suivi$/);
+  if (req.method === 'GET' && suivi) {
+    const salon = salons.get(suivi[1]);
+    if (!salon) throw erreurHttp(404, 'Ce salon n’existe plus.');
+    return json(res, 200, { code: salon.code, partie: salon.partie?.suivi() ?? null });
+  }
+  const causes = chemin.match(/^\/api\/admin\/salons\/([A-HJ-NP-Z2-9]{6})\/causes$/);
+  if (req.method === 'POST' && causes) {
+    const salon = salons.get(causes[1]);
+    if (!salon) throw erreurHttp(404, 'Ce salon n’existe plus.');
+    salon.config.causesVisibles = (await lire(req)).visibles === true;
+    sauvegarder();
+    return json(res, 200, { code: salon.code, partie: salon.partie?.suivi() ?? null });
   }
   const gestion = chemin.match(/^\/api\/admin\/salons\/([A-HJ-NP-Z2-9]{6})\/(terminer|supprimer)$/);
   if (req.method === 'POST' && gestion) {

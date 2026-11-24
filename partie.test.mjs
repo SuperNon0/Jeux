@@ -152,33 +152,31 @@ test('partie complète sur cinq sessions, avec reprise privée, départages et s
   assert.equal((await etat(voyante)).partie.historique[0].role, 'loups');
   assert.deepEqual((await etat(chasseur)).partie.historique, []);
 
-  await agir(hote, null, 'debat');
-  const appelElection = (await etat(hote)).partie;
-  assert.deepEqual(appelElection.annonces.slice(appelElection.annonceDepuis).map(a => a.fichier), ['election-maire']);
-  assert.equal((await etat(villageois)).partie.action, null);
+  const appelElection = await annonces();
+  assert.equal(appelElection.phase, 'election');
+  assert.ok(appelElection.annonces.some(a => a.fichier === 'election-maire'));
+  assert.equal((await etat(villageois)).partie.resultatElection, undefined);
   for (const [i, client] of clients.entries()) {
     await agir(client, [chasseur, chasseur, villageois, villageois, loups][i].joueur, 'election');
   }
   await agir(hote, 'revoter', 'egaliteElection');
   for (const client of clients) await agir(client, chasseur.joueur, 'election');
   const transition = (await etat(hote)).partie;
-  const annoncesVote = transition.annonces.slice(transition.annonceDepuis);
-  assert.deepEqual(annoncesVote.map(a => a.fichier), ['maire-elu', 'fin-debat', 'vote-elimination']);
+  const annoncesDebat = transition.annonces.slice(transition.annonceDepuis);
+  assert.deepEqual(annoncesDebat.map(a => a.fichier), ['maire-elu', 'debut-debat']);
   const elu = (await etat(villageois)).joueurs.find(({ id }) => id === chasseur.joueur);
-  const messageMaire = `${elu.nom} a été élu maire.`;
+  const messageMaire = `Le village a choisi son maire : c’est ${elu.nom}.`;
   const pendantAnnonce = (await etat(villageois)).partie;
   assert.equal(pendantAnnonce.resultatElection, messageMaire);
   assert.equal(pendantAnnonce.action, null);
   assert.equal(pendantAnnonce.temps.attente, true);
-  for (const { id: annonce } of annoncesVote.slice(0, -1)) {
-    await appelHote('chronometre', { partieId: transition.id, annonce });
-    assert.equal((await etat(villageois)).partie.action, null);
-  }
+  await annonces();
+  assert.equal((await etat(villageois)).partie.resultatElection, messageMaire);
+  await agir(hote, null, 'debat');
   await annonces();
   const bulletin = (await etat(villageois)).partie;
   assert.equal(bulletin.maire, chasseur.joueur);
-  assert.equal(bulletin.resultatElection, messageMaire);
-  assert.equal(bulletin.action.peutPasserVote, true);
+  assert.equal(bulletin.action.peutPasserVote, 'majorite');
   assert.ok(bulletin.temps.echeance);
 
   await agir(chasseur, villageois.joueur, 'vote');
@@ -262,13 +260,14 @@ test('trois joueurs sur cinq peuvent passer le premier vote malgré le maire et 
   }, { maire: true });
   jouer(partie, 'Diane', 'Camille');
   jouer(partie, 'Bastien', 'Élie');
-  jouer(partie, 'Alice');
   assert.equal(partie.vue('Alice').phase, 'election');
   assert.equal(partie.vue('Alice').action.peutPasserVote, undefined);
   assert.throws(() => jouer(partie, 'Alice', votePasse), /joueur disponible/);
   const vivants = partie.vue('Alice').vivants;
   for (const id of vivants) jouer(partie, id, 'Alice');
-  assert.equal(partie.vue('Alice').action.peutPasserVote, true);
+  assert.equal(partie.vue('Alice').phase, 'debat');
+  jouer(partie, 'Alice');
+  assert.equal(partie.vue('Alice').action.peutPasserVote, 'majorite');
   assert.equal(partie.vue('Alice').marqueCorbeau, 'Élie');
   for (const id of ['Bastien', 'Camille', 'Diane']) jouer(partie, id, votePasse);
   jouer(partie, 'Alice', 'Camille');
@@ -390,10 +389,10 @@ test('la marque du Corbeau compte au premier vote d’élimination uniquement', 
   jouer(partie, 'Bastien', 'Félix');
   assert.equal(partie.vue('Alice').marqueCorbeau, 'Félix');
   assert.ok(!partie.annonces.some(a => ['corbeau', 'cri-corbeau', 'fin-corbeau'].includes(a.fichier)));
-  jouer(partie, 'Alice');
   jouer(partie, 'Alice', 'Alice');
   finirVoteAvecAbstentions(partie);
   assert.equal(partie.vue('Alice').maire, 'Alice');
+  jouer(partie, 'Alice');
   jouer(partie, 'Alice', 'Camille');
   finirVoteAvecAbstentions(partie);
   assert.deepEqual(partie.vue('Alice').action.cibles, ['Camille', 'Félix']);
@@ -785,8 +784,11 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   assert.equal(apresCarte.action.revelationAttendue, true);
   assert.ok(!apresCarte.annonces.some(a => a.fichier === 'fin-voyante'));
   await demoAppel('agir', { numero: apresCarte.numero, choix: 'confirmer' });
+  // La Sorcière simulée attend elle aussi la fin de son annonce ; au réveil, le village élit son maire.
+  const electionDemo = await lireAnnonces(demoEtat, demoAppel);
+  assert.equal(electionDemo.phase, 'election');
+  await demoAppel('agir', { numero: electionDemo.numero, choix: electionDemo.action.cibles[0] });
   await lireAnnonces(demoEtat, demoAppel);
-  // La Sorcière simulée attend elle aussi la fin de son annonce avant le débat.
   const debat = (await demoEtat()).partie;
   assert.equal(debat.phase, 'debat');
   assert.ok((await demoEtat()).partie.temps.echeance - Date.now() > 59_000);
@@ -817,9 +819,9 @@ test('l’administration Cloudflare réserve les démos, les réglages, les salo
   assert.ok(repris.partie.temps.echeance - Date.now() > 59_000);
   assert.ok(Number.isFinite(repris.partie.chronoPartie.debut));
   await demoAppel('agir', { numero: repris.partie.numero, choix: null });
-  const election = await lireAnnonces(demoEtat, demoAppel);
-  assert.equal(election.phase, 'election');
-  assert.ok(election.action.cibles.length > 1);
+  const voteDemo = await lireAnnonces(demoEtat, demoAppel);
+  assert.equal(voteDemo.phase, 'vote');
+  assert.ok(voteDemo.action.cibles.length > 1);
   assert.equal((await appel(gestion + 'supprimer', { donnees: { confirme: true } })).status, 200);
   assert.equal((await appel(room + 'etat', { domaine: invite, token: sessionInvite.token, donnees: {} })).status, 404);
   const supprimes = JSON.parse(await readFile(fichierEtat, 'utf8')).salons;
@@ -962,10 +964,11 @@ test('les annonces nocturnes suivent les phases et restent disponibles dans l’
   agir(parRole.get('sorciere'), { soin: true, poison: null });
   const debut = partie.vue('Alice');
   assert.deepEqual(debut.annonces.slice(debut.annonceDepuis).map(a => a.fichier),
-    ['fin-sorciere', 'le-village-se-reveille', 'nuit-sans-victime', 'debut-debat']);
-  agir('Alice');
+    ['fin-sorciere', 'le-village-se-reveille', 'nuit-sans-victime', 'election-maire']);
   partie.terminerTour();
-  assert.deepEqual(partie.annonces.slice(-3).map(a => a.fichier), ['aucun-vote-maire', 'fin-debat', 'vote-elimination']);
+  assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['aucun-vote-maire', 'debut-debat']);
+  agir('Alice');
+  assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['fin-debat', 'vote-elimination']);
   partie.terminerTour();
   const fichiers = await readdir(new URL('./public/audio/', import.meta.url));
   for (const { fichier } of partie.annonces) assert.ok(fichiers.includes(fichier + '.mp3'), fichier);

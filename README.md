@@ -107,9 +107,13 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - Avant le tirage, **Ajouter un bot** permet à l’hôte de remplir les places libres. Ouvre deux écrans et ajoute trois bots pour essayer une composition de cinq joueurs.
 - L’hôte clique sur **Tirer les cartes**. Chaque joueur retourne sa carte et confirme **Je suis prêt**. L’hôte lance alors la partie, active le son et attend la fin du compte à rebours de 10 secondes.
 - La Voyante choisit une cible, consulte sa carte en privé, puis confirme **J’ai vu la carte** avant l’annonce de fin de tour.
-- L’élection du maire est activée par défaut. Après le premier débat, la narration appelle le village à élire son maire. À l’issue de l’élection, le nom du maire élu s’affiche sur tous les écrans, puis les annonces de fin de débat et d’ouverture du vote précèdent le bulletin d’élimination.
+- L’élection du maire est activée par défaut. Au réveil de la première nuit, avant le débat, le village élit son maire. Son nom s’affiche sur tous les écrans pendant le débat. Si le maire meurt sans successeur, une nouvelle élection a lieu au réveil suivant.
+- L’hôte peut modifier la composition et tous les réglages avec **Modifier les réglages**, dans le salon, tant que les cartes ne sont pas tirées.
 - Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Chaque joueur peut retourner la carte de la personne éliminée. L’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
-- Au premier tour du premier vote d’élimination, **Passer le vote** exige plus de la moitié des joueurs encore en jeu, soit trois voix sur cinq. Chaque joueur compte une fois pour cette décision. Si le seuil n’est pas atteint, les bulletins pour passer comptent comme des abstentions.
+- **Passer le vote** se règle à la création du salon : désactivé, à la majorité (plus de la moitié des joueurs en jeu), à l’unanimité, ou sur décision du maire (lui seul voit ce choix et sa décision clôt le vote ; sans maire, la majorité s’applique). Il vaut pour le premier vote de la partie ou pour tous les votes, toujours au premier tour. Si le seuil n’est pas atteint, les bulletins pour passer comptent comme des abstentions.
+- Le **journal** liste les morts de la partie. L’hôte choisit depuis le journal, ou depuis Administration, si les joueurs voient la cause de chaque mort (loups, poison, vote, tir du Chasseur, chagrin).
+- Dans **Administration**, **Suivre la partie** montre au meneur toutes les cartes, les potions restantes, la protection du Gardien, le couple, les choix en cours (votes, cibles des loups) et la chronique complète de la partie.
+- Les annonces disent le prénom des joueurs de la liste (maire élu, résultat du vote, marque du Corbeau, mort de chagrin, Chasseur, départage). Un bot ou un autre prénom entend la phrase générale.
 - Quand le Chasseur meurt, quelle qu’en soit la cause (vote, loups, poison ou chagrin d’amoureux), il tire aussitôt, avant le test de victoire. Tué la nuit, son choix s’ouvre au réveil, avant le débat. Si sa mort élimine déjà le dernier loup, le village gagne sans tir.
 - Après sa révélation, la Voyante a 20 secondes pour confirmer qu’elle a vu la carte, puis la nuit continue.
 - La Sorcière décide d’abord si elle utilise son soin quand il est disponible. Elle peut ensuite choisir une cible pour son poison ou le garder. Chaque choix dispose de son propre chronomètre.
@@ -157,13 +161,13 @@ En narration classique, le Gardien mort n’est plus appelé dès que sa carte a
 | `ancien-survit.mp3` | L’Ancien a survécu à la morsure des loups. (Plus utilisée : l’information reste privée.) |
 | `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
 | `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
-| `chasseur.mp3` | Le Chasseur a été éliminé. Il doit choisir une personne à emporter avec lui. |
+| `chasseur.mp3` | Le Chasseur a été éliminé. Dans un dernier souffle, il choisit qui il emporte avec lui. |
 | `compte-a-rebours.mp3` | La partie commence dans dix secondes. |
 | `corbeau.mp3` | Le Corbeau se réveille. Choisis la personne qui recevra deux voix contre elle au prochain vote d’élimination. |
 | `cri-corbeau.mp3` | Croassement du Corbeau. (Plus utilisée : son silence trahissait un tour passé.) |
 | `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |
-| `debut-debat.mp3` | Le débat commence. À vous de parler. |
-| `departage-maire.mp3` | Le maire doit départager les joueurs arrivés en tête. |
+| `debut-debat.mp3` | Le débat est ouvert. Qui soupçonnez-vous ? |
+| `departage-maire.mp3` | Égalité ! C’est au maire de trancher. |
 | `distribution.mp3` | Découvrez votre carte, puis gardez votre rôle secret. Quand vous êtes prêts, confirmez sur votre téléphone. |
 | `egalite-election.mp3` | L’élection se termine sur une égalité. L’hôte peut relancer le vote ou lancer un tirage au sort. |
 | `egalite-elimination.mp3` | Le vote se termine sur une égalité. |
@@ -179,19 +183,19 @@ En narration classique, le Gardien mort n’est plus appelé dès que sa carte a
 | `le-village-se-reveille.mp3` | Le village se réveille. |
 | `le-village-sendort.mp3` | Le village s’endort. |
 | `loups.mp3` | Les Loups-Garous se réveillent. Choisissez votre cible. |
-| `maire-elu.mp3` | Le village a élu son maire. |
+| `maire-elu.mp3` | Le village a choisi son maire. |
 | `marque-corbeau.mp3` | Le Corbeau a laissé une marque. La personne désignée commencera le prochain vote d’élimination avec deux voix contre elle. |
 | `match-nul.mp3` | La partie se termine. Aucun camp ne survit. |
 | `mort-amoureux.mp3` | Deux personnes étaient liées. La personne encore en jeu a été emportée avec l’autre. |
 | `nouveau-maire.mp3` | Le village a un nouveau maire. |
-| `nuit-avec-victimes.mp3` | La nuit a fait des victimes. Consultez le résultat sur votre téléphone. |
-| `nuit-sans-victime.mp3` | Cette nuit, personne n’a été éliminé. |
-| `resultat-vote.mp3` | Le vote est terminé. Consultez le résultat sur votre téléphone. |
+| `nuit-avec-victimes.mp3` | Au lever du jour, le village découvre une terrible nouvelle. |
+| `nuit-sans-victime.mp3` | Miracle : cette nuit, personne n’est mort. |
+| `resultat-vote.mp3` | Le village a tranché. |
 | `salvateur.mp3` | Le Gardien se réveille. Choisis la personne que tu veux protéger cette nuit. |
 | `second-tour.mp3` | Le vote reprend. Choisissez parmi les candidats arrivés à égalité. |
 | `sorciere.mp3` | La Sorcière se réveille. Tu peux utiliser tes potions ou les garder pour une autre nuit. |
 | `succession-maire.mp3` | Le maire a été éliminé. Il doit désigner son successeur. |
-| `tir-chasseur.mp3` | Le Chasseur a utilisé son dernier tir. Consultez le résultat sur votre téléphone. |
+| `tir-chasseur.mp3` | Un coup de fusil retentit. Le Chasseur a emporté quelqu’un avec lui. |
 | `tirage-au-sort.mp3` | Le sort va départager les candidats à égalité. |
 | `victoire-amoureux.mp3` | Les amoureux sont les derniers survivants. Ils remportent la partie ensemble. |
 | `victoire-loups.mp3` | Les Loups-Garous ont pris le dessus. Ils remportent la partie. |

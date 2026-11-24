@@ -323,7 +323,7 @@ function actualiser(nouveau) {
     } else if (lecture && precedente?.pause) reprendrePiste?.();
     else pisteSuivante();
   }
-  const maire = precedente?.id === partie?.id && recentes.findLast(a => a.fichier === 'nouveau-maire');
+  const maire = precedente?.id === partie?.id && recentes.findLast(a => a.fichier?.startsWith('nouveau-maire'));
   if (maire && !interfaceJoueur() && !partie?.attendAnnonce) {
     nomination.querySelector('span').textContent = maire.message;
     nomination.hidden = false;
@@ -554,12 +554,14 @@ function salon() {
          <div><h2 class="ttl">Distribution des cartes</h2><p class="soft">${!complet ? 'Toutes les places doivent être occupées et en ligne.' : etat.hote ? 'Tout le monde est là.' : 'En attente de l’hôte.'}</p></div>
          ${etat.hote ? `<div class="actions">${boutonSon()}${action('Tirer les cartes', 'layers', 'lancer', 'pri', complet ? '' : 'disabled')}
            ${etat.joueurs.length < etat.total ? action('Ajouter un bot', 'plus', 'ajouter-bot', 'gh') : ''}
-           ${aDesInvites ? action('Co-hôte', 'users', 'cohote', 'gh') : ''}</div>` : ''}
+           ${aDesInvites ? action('Co-hôte', 'users', 'cohote', 'gh') : ''}
+           ${!etat.demo ? action('Modifier les réglages', 'layers', 'reglages', 'gh') : ''}</div>` : ''}
       </section>
       ${panneauJoueurs()}
       <section class="panneau panneau-composition"><h2 class="ttl">Composition</h2><div class="composition">${Object.entries(etat.config.composition)
         .filter(([, n]) => n).map(([id, n]) => `<span>${roles[id].nom} <b class="mono">×${n}</b></span>`).join('')}</div>
-      <p class="soft">Maire ${etat.config.maire ? 'activé' : 'désactivé'} · Narration ${etat.config.discret ? 'discrète' : 'classique'}</p></section>
+      <p class="soft">Maire ${etat.config.maire ? 'activé' : 'désactivé'} · Narration ${etat.config.discret ? 'discrète' : 'classique'}
+        · Passer le vote : ${etat.config.passageVote === 'non' ? 'désactivé' : `${modesPassage[etat.config.passageVote].toLocaleLowerCase('fr')}, ${porteesPassage[etat.config.passagePortee].toLocaleLowerCase('fr')}`}</p></section>
     </div>`;
 }
 
@@ -590,7 +592,7 @@ function choixJoueurs(p) {
       ${p.phase === 'vote' && p.marqueCorbeau === id ? '<small class="muted">+2 voix contre</small>' : ''}</label>`).join('')}
       ${p.action.peutPasserVote ? `<label class="cible">
         <input type="radio" required name="cible" value="passer" ${choixCible.valeur === 'passer' ? 'checked' : ''}>
-        <span class="avatar">${icone('chev', 18)}</span><strong>Passer le vote <small>· À la majorité</small></strong>
+        <span class="avatar">${icone('chev', 18)}</span><strong>Passer le vote <small>· ${p.action.peutPasserVote === 'maire' ? 'Ta décision de maire' : modesPassage[p.action.peutPasserVote]}</small></strong>
       </label>` : ''}</fieldset>
     <div class="actions"><button class="btn pri" data-envoi>${icone('check', 18)}${p.phase === 'loups' && p.action.choixActuel ? 'Changer de cible' : (nuit?.bouton ?? textes[p.phase] ?? 'Valider')}</button>
     ${nuit?.passer ? action(nuit.passer, 'chev', 'agir', 'gh', `data-envoi data-numero="${p.numero}"`) : ''}</div></form>`;
@@ -677,6 +679,13 @@ function journal(p) {
       <div><strong>${echapper(a.nom)} · ${roles[a.role].nom}</strong><small class="muted">Nuit ${a.nuit}</small>
       ${action('Voir la carte', 'eye', 'revelation', 'gh', `data-index="${prive.length - 1 - index}"`)}</div></li>`).join('')}</ol>`
       : '<p class="soft">Tes révélations de Voyante apparaîtront ici.</p>'}</section>
+    <section class="panneau"><div class="titre-bloc"><h2 class="ttl">Morts de la partie</h2>
+      ${etat.hote ? action(p.causesVisibles ? 'Masquer les causes' : 'Afficher les causes', p.causesVisibles ? 'lock' : 'eye', 'causes', 'gh',
+        `aria-pressed="${p.causesVisibles}"`) : ''}</div>
+      ${p.morts?.length ? `<ol class="journal-liste">${[...p.morts].reverse().map(m => `<li>${icone('dot', 18)}<div>
+        <strong>${echapper(m.nom)} a perdu la vie</strong><small class="muted">${echapper(m.moment)}${m.cause ? ` · ${echapper(m.cause)}` : ''}</small></div></li>`).join('')}</ol>`
+        : '<p class="soft">Personne n’est mort pour le moment.</p>'}
+      ${etat.hote ? `<p class="soft">${p.causesVisibles ? 'Tous les joueurs voient comment chaque personne est morte.' : 'Les joueurs ne voient pas la cause des morts.'}</p>` : ''}</section>
     <section class="panneau"><h2 class="ttl">Journal du village</h2>
       ${evenements.length ? `<ol class="journal-liste">${evenements.map(a => `<li>${icone('dot', 18)}<span>${echapper(a.message)}</span></li>`).join('')}</ol>`
       : '<p class="soft">Les événements apparaîtront au fil de la partie.</p>'}</section></div>`;
@@ -734,7 +743,7 @@ function vuePhase(p) {
     </section>`;
   }
   if (p.attendAnnonce) {
-    const texteAudio = ['maire-elu', 'aucun-vote-maire'].includes(p.annonceLue) ? '' : p.sousTitre;
+    const texteAudio = /^(?:maire-elu|aucun-vote-maire)/.test(p.annonceLue ?? '') ? '' : p.sousTitre;
     return `<section class="panneau phase phase-annonce">
       <div class="phase-entete"><span class="embleme">${icone(p.pause ? 'clock' : 'bell', 24)}</span><div>
         <span class="lbl-mono">Narration</span><h2 class="ttl" aria-live="polite">${echapper(p.resultatElection || p.sousTitre || 'En attente de l’annonce')}</h2>
@@ -766,7 +775,7 @@ function vuePhase(p) {
   const progression = p.progression;
   const bulletinSimple = interfaceJoueur() && p.phase === 'vote' && p.action;
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
-    p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination', 'vote-passe'].includes(a.fichier) : false));
+    p.phase === 'attenteNuit' ? /^(?:resultat-vote|aucun-vote-elimination|vote-passe)/.test(a.fichier ?? '') : false));
   const animateurPresent = etat.joueurs.some(j => j.enLigne && [etat.hoteId, etat.cohoteId].includes(j.id));
   return `<section class="panneau phase">
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
@@ -909,6 +918,7 @@ function panneauAdmin() {
           ${salon.demo ? '· Démo ' : ''}· ${salon.joueurs}/${salon.total} places · ${salon.enLigne} en ligne${salon.jour ? ` · Tour ${salon.jour}` : ''}</small></div>
           ${pastille(label, ic, salon.statut === 'pause' ? 'pause' : '')}</div>
           <div class="actions">
+            ${salon.jour || salon.statut === 'terminee' ? action('Suivre la partie', 'eye', 'suivre', 'pri', `data-code="${salon.code}"`) : ''}
             ${salon.statut === 'cloturee' ? '' : action('Terminer', 'lock', 'gerer-salon', 'gh', `data-code="${salon.code}" data-operation="terminer" aria-label="Terminer le salon ${salon.code}"`)}
             ${action('Supprimer', 'trash', 'gerer-salon', 'gh', `data-code="${salon.code}" data-operation="supprimer" aria-label="Supprimer le salon ${salon.code}"`)}
           </div></li>`;
@@ -939,6 +949,27 @@ function panneauAdmin() {
     </details>
     ${formulaireSon(audios, annonces, sonAdmin)}
   </section></div>`;
+}
+
+// Tableau du meneur : cartes, pouvoirs restants, choix en cours et chronique complète de la partie.
+function suiviPartie({ code: salle, partie: p }) {
+  if (!p) return '<p class="soft">Aucune partie en cours dans ce salon.</p>';
+  const nomsPhases = { debat: 'Débat', election: 'Élection du maire', vote: 'Vote d’élimination', attenteNuit: 'Fin du jour',
+    fin: 'Partie terminée', distribution: 'Distribution des cartes', lancement: 'Lancement' };
+  const phase = nomsPhases[p.phase] ?? (roles[p.phase]?.nomGroupe ?? roles[p.phase]?.nom ?? p.phase);
+  return `<div class="pile suivi-partie">
+    <div class="actions">${action('Actualiser', 'refresh', 'actualiser-suivi', 'gh', `data-code="${salle}"`)}
+      ${action(p.causesVisibles ? 'Masquer les causes aux joueurs' : 'Montrer les causes aux joueurs', p.causesVisibles ? 'lock' : 'eye',
+        'causes-admin', 'gh', `data-code="${salle}" data-visibles="${p.causesVisibles ? 'non' : 'oui'}"`)}</div>
+    <p class="notice">${icone(p.moment === 'nuit' ? 'moon' : 'sun', 18)}${p.moment === 'nuit' ? 'Nuit' : 'Jour'} ${p.jour} · ${echapper(phase)}</p>
+    <section><h3 class="ttl">Joueurs</h3><ul class="journal-liste">${p.joueurs.map(j => `<li>${icone(j.vivant ? 'dot' : 'x', 18)}
+      <div><strong>${echapper(j.nom)}</strong><small class="muted">${echapper(j.role)}${j.vivant ? '' : ' · mort'}</small></div></li>`).join('')}</ul></section>
+    ${p.etats.length ? `<section><h3 class="ttl">Pouvoirs et états</h3><ul class="journal-liste">${p.etats.map(e => `<li>${icone('sparkle', 18)}<span>${echapper(e)}</span></li>`).join('')}</ul></section>` : ''}
+    ${p.enCours.length ? `<section><h3 class="ttl">Choix en cours</h3><ul class="journal-liste">${p.enCours.map(c => `<li>${icone(c.choix ? 'check' : 'hourglass', 18)}
+      <span>${echapper(c.nom)} → ${echapper(c.choix ?? 'en attente')}</span></li>`).join('')}</ul></section>` : ''}
+    <section><h3 class="ttl">Chronique</h3>${p.chronique.length ? `<ol class="journal-liste">${[...p.chronique].reverse().map(e => `<li>${icone('list', 18)}
+      <div><span>${echapper(e.texte)}</span><small class="muted">${echapper(e.moment)}</small></div></li>`).join('')}</ol>` : '<p class="soft">Rien ne s’est encore passé.</p>'}</section>
+  </div>`;
 }
 
 function formaterChrono(secondes) {
@@ -1007,6 +1038,10 @@ const dureesSalon = [
   { champ: 'roleMinutes', cle: 'roleSecondes', libelle: 'Choix des rôles', defaut: 60 },
 ];
 const minutesSalon = secondes => Number((Number(secondes) / 60).toFixed(6));
+const modesPassage = { non: 'Désactivé', majorite: 'À la majorité', unanimite: 'À l’unanimité', maire: 'Décision du maire' };
+const porteesPassage = { premier: 'Premier vote seulement', tous: 'Tous les votes' };
+const optionsListe = (liste, choix) => Object.entries(liste).map(([valeur, texte]) =>
+  `<option value="${valeur}" ${valeur === choix ? 'selected' : ''}>${texte}</option>`).join('');
 
 function sectionCreation(titre, picto, contenu) {
   return `<details class="avances creation-section"><summary>
@@ -1014,17 +1049,23 @@ function sectionCreation(titre, picto, contenu) {
   </summary><div class="creation-corps">${contenu}</div></details>`;
 }
 
-const formCreation = () => `<form data-form="creer">
+const formCreation = (modification = false) => `<form data-form="creer" ${modification ? 'data-modification' : ''}>
   <div class="creation-contenu">
     <div class="creation-identite">
-      ${choixPrenom}
+      ${modification ? '' : choixPrenom}
       <label class="champ-jeu">Nombre de joueurs <select name="total">${Array.from({ length: 12 }, (_, i) => i + 5)
         .map(n => `<option value="${n}" ${n === 6 ? 'selected' : ''}>${n} joueurs</option>`).join('')}</select></label>
     </div>
     <label class="champ-jeu">Composition rapide<select name="preset">${optionsComposition()}</select></label>
     <div class="ligne-option creation-maire"><span class="creation-picto">${icone('star', 17)}</span>
       <label class="case"><input type="checkbox" name="maire" checked>Élection du maire</label>
-      ${aide('creation-maire', 'Élection du maire', 'Le village élit son maire à la fin du premier débat. Sa voix compte double lors des votes d’élimination et il tranche les égalités.')}</div>
+      ${aide('creation-maire', 'Élection du maire', 'Le village élit son maire au réveil de la première nuit, avant le débat. Sa voix compte double lors des votes d’élimination et il tranche les égalités.')}</div>
+    <div class="creation-passage">
+      <label class="champ-jeu">Passer le vote<select name="passageVote">${optionsListe(modesPassage, 'majorite')}</select></label>
+      <label class="champ-jeu">Pour quels votes<select name="passagePortee">${optionsListe(porteesPassage, 'premier')}</select></label>
+    </div>
+    <div class="ligne-option"><span class="soft">Passer le vote : personne n’est éliminé ce jour-là.</span>
+      ${aide('creation-passage', 'Passer le vote', 'À la majorité : plus de la moitié des joueurs en vie choisissent Passer le vote. À l’unanimité : tout le monde doit le choisir. Décision du maire : seul le maire voit ce choix et sa décision clôt le vote ; sans maire, la majorité s’applique.')}</div>
     <div class="creation-sections">
       ${sectionCreation('Personnaliser les règles', 'layers', `
         <div class="creation-nuit">
@@ -1067,7 +1108,7 @@ const formCreation = () => `<form data-form="creer">
   </div>
   <div class="creation-pied">
     <p class="composition-prevision soft" id="projection" role="status"></p>
-    <button class="btn pri" data-envoi>${icone('plus', 18)}Créer le salon</button>
+    <button class="btn pri" data-envoi>${modification ? `${icone('check', 18)}Enregistrer les réglages` : `${icone('plus', 18)}Créer le salon`}</button>
   </div>
 </form>`;
 
@@ -1114,7 +1155,8 @@ function reglageSalon(donnees) {
     ...Object.fromEntries(rolesOptionnels.map(id => [id, Number(donnees.has(id))])) };
   composition.villageois = total - Object.values(composition).reduce((a, b) => a + b, 0);
   return { total, composition, ordre: ordreActif(donnees.get('ordre'), id => composition[id]),
-    maire: donnees.has('maire'), discret: donnees.has('discret'), ...lireDurees(donnees) };
+    maire: donnees.has('maire'), discret: donnees.has('discret'),
+    passageVote: donnees.get('passageVote') ?? 'majorite', passagePortee: donnees.get('passagePortee') ?? 'premier', ...lireDurees(donnees) };
 }
 
 function appliquerComposition(form) {
@@ -1139,6 +1181,8 @@ function appliquerComposition(form) {
     for (const id of rolesOptionnels) champs[id].checked = Boolean(preset.composition[id]);
     champs.maire.checked = preset.maire;
     champs.discret.checked = preset.discret;
+    champs.passageVote.value = preset.passageVote ?? 'majorite';
+    champs.passagePortee.value = preset.passagePortee ?? 'premier';
     chargerDurees(champs, preset);
     const option = [...champs.ordre.options].find(o => ordreActif(o.value, id => preset.composition[id]).join(',') === preset.ordre.join(','));
     champs.ordre.value = option?.value ?? champs.ordre.options[0].value;
@@ -1149,6 +1193,7 @@ function appliquerComposition(form) {
     const choix = favoris[index]?.champs;
     if (choix) {
       for (const nom of ['total', 'loups', 'ordre']) champs[nom].value = choix[nom];
+      for (const nom of ['passageVote', 'passagePortee']) if (choix[nom]) champs[nom].value = choix[nom];
       chargerDurees(champs, choix);
       for (const nom of ['maire', 'discret', ...rolesOptionnels]) champs[nom].checked = Boolean(choix[nom]);
     }
@@ -1182,13 +1227,29 @@ function enregistrerFavori(form) {
     if (!champs[nom].reportValidity()) return;
   }
   const valeurs = lireDurees(new FormData(form));
-  for (const cle of ['total', 'loups', 'ordre']) valeurs[cle] = champs[cle].value;
+  for (const cle of ['total', 'loups', 'ordre', 'passageVote', 'passagePortee']) valeurs[cle] = champs[cle].value;
   for (const cle of ['maire', 'discret', ...rolesOptionnels]) valeurs[cle] = champs[cle].checked;
   favoris = [{ nom, champs: valeurs }, ...favoris.filter(favori => favori.nom !== nom)].slice(0, 16);
   sauvegarde.ecrire(cleFavoris, JSON.stringify(favoris));
   champs.preset.innerHTML = optionsComposition();
   champs.preset.value = 'favori-0';
   afficherAvis('Composition enregistrée sur cet appareil.', 4000);
+}
+
+// Préremplit le formulaire avec les réglages actuels du salon.
+function remplirReglages(form) {
+  const champs = form.elements;
+  const config = etat.config;
+  champs.total.value = etat.total;
+  champs.loups.value = config.composition.loups;
+  for (const id of rolesOptionnels) champs[id].checked = Boolean(config.composition[id]);
+  champs.maire.checked = config.maire;
+  champs.discret.checked = config.discret;
+  champs.passageVote.value = config.passageVote;
+  champs.passagePortee.value = config.passagePortee;
+  chargerDurees(champs, config);
+  const option = [...champs.ordre.options].find(o => ordreActif(o.value, id => config.composition[id]).join(',') === config.ordre.join(','));
+  champs.ordre.value = option?.value ?? champs.ordre.options[0].value;
 }
 
 function configurer(form, evenement) {
@@ -1240,6 +1301,8 @@ function recherche() {
 function contenuFeuille(type, contexte) {
   switch (type) {
     case 'creer': return ['Créer un salon', formCreation()];
+    case 'reglages': return ['Réglages du salon', formCreation(true)];
+    case 'suivi': return [`Suivi du salon ${contexte.code}`, suiviPartie(contexte)];
     case 'cohote': return ['Co-hôte', `<form data-form="cohote">
       <label class="champ-jeu">Animateur délégué<select name="joueur"><option value="">Aucun co-hôte</option>
       ${etat.joueurs.filter(j => !j.bot && j.id !== etat.hoteId).map(j => `<option value="${j.id}" ${j.id === etat.cohoteId ? 'selected' : ''}>${echapper(j.nom)}</option>`).join('')}</select></label>
@@ -1318,10 +1381,11 @@ function afficherContenuFeuille(type, contexte) {
   const [titre, contenu] = contenuFeuille(type, contexte);
   feuille.dataset.type = type;
   feuille.innerHTML = `<div class="grab" aria-hidden="true"></div><div class="tete-feuille">
-    ${type === 'creer' ? `<span class="creation-illustration" aria-hidden="true">${art('nuit')}</span>` : ''}
+    ${['creer', 'reglages'].includes(type) ? `<span class="creation-illustration" aria-hidden="true">${art('nuit')}</span>` : ''}
     <h2 id="titre-feuille" class="ttl">${titre}</h2>
     ${action('<span class="sr">Fermer</span>', 'x', 'fermer', 'ico gh', 'aria-label="Fermer"')}</div><div class="corps-feuille"><p class="notification" data-avis role="status" hidden></p>${contenu}</div>`;
   const form = feuille.querySelector('[data-form="creer"]');
+  if (form?.hasAttribute('data-modification')) remplirReglages(form);
   if (form) configurer(form);
 }
 
@@ -1553,6 +1617,13 @@ document.addEventListener('submit', event => {
       afficherAvis(operation === 'supprimer' ? 'Salon supprimé.' : 'Salon clôturé.', 5000);
       return;
     }
+    if (actionForm === 'creer' && form.hasAttribute('data-modification')) {
+      const nouveau = await api('reglages', reglageSalon(data));
+      fermerFeuille();
+      actualiser(nouveau);
+      afficherAvis('Réglages du salon enregistrés.', 4000);
+      return;
+    }
     if (actionForm === 'creer') {
       const session = await api('', { prenom: data.get('prenom'), ...reglageSalon(data) });
       fermerFeuille(false);
@@ -1637,7 +1708,7 @@ document.addEventListener('click', event => {
     return;
   }
   if (id === 'fermer') return fermerFeuille();
-  if (['creer', 'rejoindre', 'apparence', 'plus', 'regles', 'invitation', 'role', 'rechercher', 'cohote'].includes(id)) {
+  if (['creer', 'reglages', 'rejoindre', 'apparence', 'plus', 'regles', 'invitation', 'role', 'rechercher', 'cohote'].includes(id)) {
     return ouvrirFeuille(id, cible.dataset.role);
   }
   if (id === 'accent') {
@@ -1757,6 +1828,23 @@ document.addEventListener('click', event => {
     }
     if (id === 'potion-soin') {
       actualiser(await api('agir', { numero: Number(cible.dataset.numero), choix: { potion: 'soin', utiliser: cible.hasAttribute('data-utiliser') } }));
+      return;
+    }
+    if (id === 'causes') {
+      actualiser(await api('causes', { visibles: !etat.partie?.causesVisibles }));
+      return;
+    }
+    if (id === 'suivre' || id === 'actualiser-suivi') {
+      const suivi = await requete(`/api/admin/salons/${cible.dataset.code}/suivi`);
+      if (id === 'suivre') ouvrirFeuille('suivi', suivi); else afficherContenuFeuille('suivi', suivi);
+      return;
+    }
+    if (id === 'causes-admin') {
+      const suivi = await requete(`/api/admin/salons/${cible.dataset.code}/causes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibles: cible.dataset.visibles === 'oui' }),
+      });
+      afficherContenuFeuille('suivi', suivi);
       return;
     }
     if (id === 'agir') actualiser(await api('agir', { numero: Number(cible.dataset.numero), choix: cible.dataset.choix ?? null }));

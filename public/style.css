@@ -428,6 +428,9 @@ form, .options, .champ-jeu, .faq { display: grid; gap: 10px; }
 .creation-nuit { grid-template-columns: minmax(104px, 1fr) minmax(0, 2fr); }
 .creation-nuit .ligne-option { min-height: 45px; justify-content: space-between; }
 .creation-temps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.creation-passage { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.creation-passage .champ-jeu select { width: 100%; }
+.suivi-partie h3 { margin-bottom: 6px; }
 .creation-contenu .champ-jeu, .creation-roles legend { font-size: 13px; font-weight: 600; }
 .creation-contenu .champ-jeu select { min-width: 0; }
 .creation-contenu .champ-jeu small { font-size: inherit; font-weight: 400; }

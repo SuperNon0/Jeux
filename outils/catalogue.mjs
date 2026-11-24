@@ -3,7 +3,7 @@
 // L’action GitHub « Voix du narrateur » crée ensuite les MP3 manquants.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { listeRoles } from '../public/loup-garou/roles/index.mjs';
-import { prenoms } from '../regles.mjs';
+import { phrasesAvecPrenom, prenoms } from '../regles.mjs';
 
 const fichierCatalogue = new URL('../public/annonces.json', import.meta.url);
 
@@ -20,7 +20,10 @@ export function phrasesAttendues() {
   for (const role of listeRoles) {
     for (const [cle, texte] of Object.entries(role.phrases ?? {})) phrases[cleDePhrase(role.id, cle)] = texte;
   }
-  for (const [cle, nom] of Object.entries(prenoms)) phrases[`deces-${cle}`] = `${nom} a perdu la vie.`;
+  for (const [cle, nom] of Object.entries(prenoms)) {
+    phrases[`deces-${cle}`] = `${nom} a perdu la vie.`;
+    for (const [base, phrase] of Object.entries(phrasesAvecPrenom)) phrases[`${base}-${cle}`] = phrase(nom);
+  }
   return phrases;
 }
 

@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { annonceElimination, candidatsEnTete, ordreDeNuit, roles, tirerAuSort, votePasse } from './regles.mjs';
+import { annonceElimination, candidatsEnTete, causesDeMort, ordreDeNuit, phraseAvecPrenom, roles, tirerAuSort, votePasse } from './regles.mjs';
 import { rolesHistoriques } from './public/loup-garou/roles/index.mjs';
 
 export const delaiForcage = 45_000;
@@ -182,6 +182,23 @@ export class Partie {
     this.annonces.push({ id: this.annonces.length + 1, fichier, message });
   }
 
+  // Phrase dite avec le prénom du joueur quand sa piste existe (« maire-elu-noe »).
+  annoncerNom(base, id) {
+    const { fichier, message } = phraseAvecPrenom(base, this.nom(id));
+    this.annoncer(fichier, message);
+  }
+
+  // Chronique secrète de la partie, réservée au panneau d’administration.
+  noter(texte) {
+    this.chronique ??= [];
+    this.chronique.push({ moment: `${this.moment === 'nuit' ? 'Nuit' : 'Jour'} ${this.jour}`, texte });
+  }
+
+  nomEtRole(id) { return id ? `${this.nom(id)} (${this.nomRole(this.cartes.get(id))})` : 'personne'; }
+
+  // Le joueur qui porte ce rôle cette nuit, pour la chronique.
+  porteur(role) { return this.nom(this.tour.acteurs[0]) ?? this.nomRole(role); }
+
   phase(type, acteurs, cibles, fichier) {
     const debut = Date.now();
     const duree = type === 'compteARebours' ? 10 : type === 'debat' ? this.config.debatSecondes
@@ -222,6 +239,7 @@ export class Partie {
     this.cibleCorbeau = null;
     this.marqueCorbeau = null;
     this.victimesNuit = [];
+    this.moment = 'nuit';
     this.annoncer('le-village-sendort');
     this.prochainRole();
   }
@@ -260,8 +278,10 @@ export class Partie {
     }
     const victimes = [...causes.keys()];
     this.annoncer(victimes.length ? 'nuit-avec-victimes' : 'nuit-sans-victime',
-      victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'La nuit n’a fait aucune victime.');
+      victimes.length ? `Élimination de nuit · ${victimes.map(id => this.nom(id)).join(', ')}` : 'Miracle : cette nuit, personne n’est mort.');
+    // Les morts de l’aube restent notées « Nuit » dans la chronique ; la suite se passe le jour.
     this.eliminer([...causes], 'debat');
+    this.moment = 'jour';
   }
 
   ciblesDeNuit(role, acteurs) {
@@ -292,6 +312,9 @@ export class Partie {
   }
 
   terminerRoleNocturne(role) {
+    if (!this.tour.factice && this.tour.type === role && this.tour.acteurs.length && !this.tour.note) {
+      this.noter(`${this.nomRole(role)} (${this.porteur(role)}) n’a rien choisi à temps.`);
+    }
     if (!this.config.discret) {
       this.annoncer(`fin-${role}`);
       if (role === 'cupidon' && this.couple) this.annoncer('amoureux-lies');
@@ -312,9 +335,12 @@ export class Partie {
 
   attendreNuit() { this.phase('attenteNuit', this.animateurs(), []); }
 
-  ouvrirVote() {
+  ouvrirVote() { this.voteElimination(); }
+
+  // Au réveil, le village élit d’abord son maire s’il n’en a pas, puis débat.
+  journee() {
     if (this.config.maire && !this.maire) this.vote('election');
-    else this.voteElimination();
+    else this.debat();
   }
 
   vote(type, cibles = [...this.vivants], fichier = type === 'election' ? 'election-maire' : 'vote-elimination') {
@@ -327,14 +353,33 @@ export class Partie {
     this.vote('vote');
   }
 
-  peutPasserVote() {
-    return this.tour.type === 'vote' && this.jour === 1 && !this.tour.relance;
+  // Passage du vote : désactivé, à la majorité, à l’unanimité ou sur décision du maire (majorité sans maire),
+  // au premier vote de la partie seulement ou à chaque vote d’élimination.
+  modePassage() {
+    const mode = this.config.passageVote ?? 'majorite';
+    return mode === 'maire' && !this.vivants.has(this.maire) ? 'majorite' : mode;
+  }
+
+  peutPasserVote(id) {
+    const portee = this.config.passagePortee ?? 'premier';
+    const mode = this.modePassage();
+    return this.tour.type === 'vote' && !this.tour.relance && mode !== 'non' &&
+      (portee === 'tous' || this.jour === 1) && (id === undefined || mode !== 'maire' || id === this.maire);
+  }
+
+  votePasse(reponses) {
+    const mode = this.modePassage();
+    if (!this.peutPasserVote()) return false;
+    const pour = this.tour.acteurs.filter(acteur => reponses.get(acteur) === votePasse).length;
+    if (mode === 'maire') return reponses.get(this.maire) === votePasse;
+    if (mode === 'unanimite') return pour === this.tour.acteurs.length;
+    return pour > this.tour.acteurs.length / 2;
   }
 
   elire(id, succession = false) {
     this.maire = id;
-    this.annoncer(succession ? 'nouveau-maire' : 'maire-elu',
-      succession ? `${this.nom(id)} devient maire.` : `${this.nom(id)} a été élu maire.`);
+    this.annoncerNom(succession ? 'nouveau-maire' : 'maire-elu', id);
+    this.noter(`${this.nomEtRole(id)} devient maire${succession ? ' par succession' : ''}.`);
   }
 
   eliminer(victimes, suite) {
@@ -354,9 +399,14 @@ export class Partie {
     if (!this.vivants.delete(id)) return;
     const role = this.cartes.get(id);
     if (this.config.annoncesEliminations || cause === 'vote') (this.mortsRevelees ??= []).push(id);
+    // Vote, chagrin et tir ont déjà dit le prénom : seule la piste du rôle suit.
+    const dejaNomme = ['vote', 'amour', 'chasseur'].includes(cause);
     if (this.config.annoncesEliminations) {
-      for (const { fichier, message } of annonceElimination(this.nom(id), role)) this.annoncer(fichier, message);
+      for (const { fichier, message } of annonceElimination(this.nom(id), role, !dejaNomme)) this.annoncer(fichier, message);
     }
+    (this.morts ??= []).push({ moment: `${this.moment === 'nuit' ? 'Nuit' : 'Jour'} ${this.jour}`, id, nom: this.nom(id),
+      cause, annonce: this.annonces.length });
+    this.noter(`${this.nomEtRole(id)} meurt : ${causesDeMort[cause] ?? cause}.`);
     for (const [, surMort] of crochets('surMort')) surMort(this, id, cause);
     // Le Chasseur tire quelle que soit la cause de sa mort : loups, vote, poison ou chagrin.
     if (role === 'chasseur') {
@@ -368,7 +418,7 @@ export class Partie {
     }
     const partenaire = this.partenaireAmoureux(id);
     if (this.vivants.has(partenaire) && !victimesDirectes.includes(partenaire)) {
-      this.annoncer('mort-amoureux', `${this.nom(partenaire)} meurt de chagrin après l’élimination de ${this.nom(id)}.`);
+      this.annoncerNom('mort-amoureux', partenaire);
       this.enlever(partenaire, 'amour');
     }
   }
@@ -377,7 +427,9 @@ export class Partie {
     const plusDeLoup = ![...this.vivants].some(id => this.cartes.get(id) === 'loups');
     if (this.effets.length && !plusDeLoup) {
       const { type, acteur } = this.effets.shift();
-      this.phase(type, [acteur], [...this.vivants], type === 'succession' ? 'succession-maire' : 'chasseur');
+      const { fichier } = phraseAvecPrenom(type === 'succession' ? 'succession-maire' : 'chasseur', this.nom(acteur));
+      this.phase(type, [acteur], [...this.vivants], fichier);
+      this.annonces.at(-1).message = phraseAvecPrenom(type === 'succession' ? 'succession-maire' : 'chasseur', this.nom(acteur)).message;
       return;
     }
     this.effets = [];
@@ -385,6 +437,7 @@ export class Partie {
       const gagnant = victoire(this);
       if (gagnant) {
         this.gagnant = gagnant;
+        this.noter(`Fin de la partie : victoire ${this.nomRole(gagnant)}.`);
         this.phase('fin', [], [], `victoire-${gagnant}`);
         return;
       }
@@ -396,21 +449,22 @@ export class Partie {
     const victoireAmoureux = coupleMixte && this.vivants.size === 2;
     if (victoireAmoureux || loups === 0 || (!coupleMixte && loups * 2 >= this.vivants.size)) {
       this.gagnant = victoireAmoureux ? 'amoureux' : !this.vivants.size ? 'egalite' : loups ? 'loups' : 'village';
+      this.noter(`Fin de la partie : ${{ amoureux: 'les amoureux gagnent', egalite: 'aucun survivant', loups: 'les Loups-Garous gagnent', village: 'le village gagne' }[this.gagnant]}.`);
       this.phase('fin', [], [], this.gagnant === 'egalite' ? 'match-nul' : `victoire-${this.gagnant}`);
       return;
     }
     if (this.suite === 'debat') {
       if (this.vivants.has(this.cibleCorbeau)) {
         this.marqueCorbeau = this.cibleCorbeau;
-        this.annoncer('marque-corbeau', `${this.nom(this.marqueCorbeau)} est marqué par le Corbeau et reçoit deux voix au premier vote d’élimination.`);
+        this.annoncerNom('marque-corbeau', this.marqueCorbeau);
       }
-      this.debat();
+      this.journee();
     } else this.attendreNuit();
   }
 
   eliminerAuVote(id) {
     this.revelationVote = { numero: this.numero, nom: this.nom(id), role: this.cartes.get(id) };
-    this.annoncer('resultat-vote', `${this.nom(id)} a été éliminé par le village.`);
+    this.annoncerNom('resultat-vote', id);
     this.eliminer([[id, 'vote']], 'nuit');
   }
 
@@ -437,7 +491,7 @@ export class Partie {
       else {
         this.annoncer('tirage-au-sort');
         const gagnant = tirerAuSort(cibles);
-        if (election) { this.elire(gagnant); this.voteElimination(); }
+        if (election) { this.elire(gagnant); this.debat(); }
         else this.eliminerAuVote(gagnant);
       }
       return;
@@ -448,11 +502,14 @@ export class Partie {
         throw new Error('Choisis deux joueurs différents et encore en vie.');
       }
       this.couple = [...choix];
+      this.tour.note = true;
+      this.noter(`Cupidon (${this.nom(id)}) lie ${this.nomEtRole(choix[0])} et ${this.nomEtRole(choix[1])}.`);
       this.terminerRoleNocturne(type);
       return;
     }
     if (type === 'voyante' && this.tour.revelationAttendue) {
       if (choix !== 'confirmer') throw new Error('Confirme que tu as vu la carte.');
+      this.tour.note = true;
       this.terminerRoleNocturne(type);
       return;
     }
@@ -461,14 +518,20 @@ export class Partie {
         if (choix.potion !== this.potionAttendue()) throw new Error('Cette potion n’est plus disponible à cette étape.');
         if (choix.potion === 'soin') {
           if (typeof choix.utiliser !== 'boolean') throw new Error('Confirme ton choix de potion de soin.');
+          this.noter(choix.utiliser ? `La Sorcière (${this.nom(id)}) sauve ${this.nomEtRole(this.victimeLoups)}.`
+            : `La Sorcière (${this.nom(id)}) garde sa potion de soin.`);
           if (choix.utiliser) { this.potions.soin = false; this.victimeLoups = null; }
+          this.tour.note = true;
           if (this.potions.poison) { this.ouvrirPoison(); return; }
         } else {
           if (!this.potions.poison || (choix.cible !== null && !cibles.includes(choix.cible))) {
             throw new Error('Choix de potion de poison invalide.');
           }
           if (choix.cible) { this.potions.poison = false; this.poison = choix.cible; }
+          this.noter(choix.cible ? `La Sorcière (${this.nom(id)}) empoisonne ${this.nomEtRole(choix.cible)}.`
+            : `La Sorcière (${this.nom(id)}) garde sa potion de poison.`);
         }
+        this.tour.note = true;
         this.terminerRoleNocturne(type);
         return;
       }
@@ -477,18 +540,32 @@ export class Partie {
           (choix.poison !== null && (!this.potions.poison || !cibles.includes(choix.poison)))) {
         throw new Error('Choix de potion invalide.');
       }
+      if (choix.soin) this.noter(`La Sorcière (${this.nom(id)}) sauve ${this.nomEtRole(this.victimeLoups)}.`);
+      if (choix.poison) this.noter(`La Sorcière (${this.nom(id)}) empoisonne ${this.nomEtRole(choix.poison)}.`);
+      if (!choix.soin && !choix.poison) this.noter(`La Sorcière (${this.nom(id)}) garde ses potions.`);
       if (choix.soin) { this.potions.soin = false; this.victimeLoups = null; }
       if (choix.poison) { this.potions.poison = false; this.poison = choix.poison; }
+      this.tour.note = true;
       this.terminerRoleNocturne(type);
       return;
     }
     const protectionPassee = Boolean(roles[type]?.nuit?.passer) && choix === null;
-    const passageDuVote = choix === votePasse && this.peutPasserVote();
+    const passageDuVote = choix === votePasse && this.peutPasserVote(id);
     if (cibles.length && !protectionPassee && !passageDuVote && (!cibles.includes(choix) || (type === 'voyante' && choix === id))) {
       throw new Error('Choisis un joueur disponible.');
     }
     reponses.set(id, choix);
-    if (type === 'loups' ? this.meuteUnanime() : reponses.size === acteurs.length) this.terminerTour();
+    // Le maire qui décide de passer le vote clôt le scrutin sans attendre les autres.
+    const decisionMaire = passageDuVote && this.modePassage() === 'maire';
+    if (decisionMaire || (type === 'loups' ? this.meuteUnanime() : reponses.size === acteurs.length)) this.terminerTour();
+  }
+
+  noterBulletins(titre, reponses) {
+    const lignes = this.tour.acteurs.map(votant => {
+      const choix = reponses.get(votant);
+      return `${this.nom(votant)} → ${choix === votePasse ? 'passer' : this.nom(choix) ?? 'abstention'}`;
+    });
+    this.noter(`${titre} : ${lignes.join(', ')}.`);
   }
 
   terminerTour() {
@@ -497,6 +574,8 @@ export class Partie {
     switch (type) {
       case 'distribution': this.phase('lancement', [this.config.hote], []); break;
       case 'voyante':
+        this.noter(`La Voyante (${this.nom(id)}) découvre ${this.nomEtRole(choix)}.`);
+        this.tour.note = true;
         this.historiques.get(id).push({ nuit: this.jour, nom: this.nom(choix), role: this.cartes.get(choix) });
         this.tour.reponses.clear();
         this.tour.revelationAttendue = true;
@@ -505,43 +584,54 @@ export class Partie {
         this.tour.numero = ++this.numero;
         break;
       case 'salvateur':
+        this.noter(choix ? `Le Gardien (${this.nom(id)}) protège ${this.nom(choix)}.` : `Le Gardien (${this.nom(id)}) ne protège personne.`);
+        this.tour.note = true;
         this.protection = choix;
         this.terminerRoleNocturne(type);
         break;
       case 'loups': {
         const premiers = candidatsEnTete(reponses);
         const cible = premiers.length ? tirerAuSort(premiers) : null;
+        const bulletins = [...reponses].map(([loup, vise]) => `${this.nom(loup)} → ${this.nom(vise) ?? 'aucun choix'}`).join(', ');
+        let issue = '';
         this.victimeLoups = cible === this.protection ? null : cible;
+        if (cible && !this.victimeLoups) issue = ' Le Gardien la protège.';
         if (this.victimeLoups && crochets('surAttaque').some(([, surAttaque]) => surAttaque(this, this.victimeLoups))) {
           this.victimeLoups = null;
+          issue = ' Sa maison est vide.';
         }
         if (this.cartes.get(this.victimeLoups) === 'ancien' && !this.ancienTouche) {
           this.ancienTouche = true;
           this.ancienMorduCetteNuit = true;
           this.victimeLoups = null;
+          issue = ' L’Ancien résiste à la morsure.';
         }
+        this.noter(`Loups : ${bulletins}. Cible : ${cible ? this.nomEtRole(cible) : 'personne'}${premiers.length > 1 ? ' (tirage au sort)' : ''}.${issue}`);
+        this.tour.note = true;
         this.terminerRoleNocturne(type);
         break;
       }
       case 'corbeau':
+        this.noter(choix ? `Le Corbeau (${this.nom(id)}) marque ${this.nom(choix)}.` : `Le Corbeau (${this.nom(id)}) ne marque personne.`);
+        this.tour.note = true;
         this.cibleCorbeau = choix;
         this.terminerRoleNocturne(type);
         break;
       case 'election': {
+        this.noterBulletins('Élection du maire', reponses);
         const premiers = candidatsEnTete(reponses);
         if (premiers.length > 1) this.phase('egaliteElection', this.animateurs(), premiers, 'egalite-election');
         else {
           if (premiers.length) this.elire(premiers[0]);
           else this.annoncer('aucun-vote-maire', 'Aucun vote à l’élection du maire.');
-          this.voteElimination();
+          this.debat();
         }
         break;
       }
       case 'vote': {
         const marque = !this.tour.relance && this.vivants.has(this.marqueCorbeau) ? this.marqueCorbeau : null;
-        const voixPourPasser = this.peutPasserVote()
-          ? this.tour.acteurs.filter(acteur => reponses.get(acteur) === votePasse).length : 0;
-        if (voixPourPasser > this.tour.acteurs.length / 2) {
+        this.noterBulletins(this.tour.relance ? 'Second tour' : 'Vote d’élimination', reponses);
+        if (this.votePasse(reponses)) {
           this.marqueCorbeau = null;
           this.annoncer('vote-passe', 'Le village a choisi de passer le vote. Personne n’est éliminé.');
           this.attendreNuit();
@@ -559,17 +649,26 @@ export class Partie {
           this.attendreNuit();
         } else if (premiers.length === 1) this.eliminerAuVote(premiers[0]);
         else {
+          if (this.maire) {
+            const { fichier, message } = phraseAvecPrenom('departage-maire', this.nom(this.maire));
+            this.phase('departage', [this.maire], premiers, fichier);
+            this.annonces.at(-1).message = message;
+            break;
+          }
           this.annoncer('egalite-elimination');
-          if (this.maire) this.phase('departage', [this.maire], premiers, 'departage-maire');
-          else if (this.tour.relance) {
+          if (this.tour.relance) {
             this.phase('egaliteVote', this.animateurs(), premiers, 'egalite-vote-hote');
           } else this.vote('vote', premiers, 'second-tour');
         }
         break;
       }
-      case 'departage': this.eliminerAuVote(choix); break;
+      case 'departage':
+        this.noter(`Le maire ${this.nom(id)} tranche contre ${this.nom(choix)}.`);
+        this.eliminerAuVote(choix);
+        break;
       case 'chasseur':
-        this.annoncer('tir-chasseur', `Le Chasseur a emporté ${this.nom(choix)}.`);
+        this.noter(`Le Chasseur (${this.nom(id)}) tire sur ${this.nomEtRole(choix)}.`);
+        this.annoncerNom('tir-chasseur', choix);
         this.enlever(choix, 'chasseur');
         this.resoudreEffets();
         break;
@@ -577,9 +676,40 @@ export class Partie {
       default:
         if (rolesACrochets.includes(type) && roles[type].nuit) {
           roles[type].agir?.(this, id, choix);
+          this.noter(`${this.nomRole(type)} (${this.nom(id)}) ${choix ? `choisit ${this.nomEtRole(choix)}` : 'passe son tour'}.`);
+          this.tour.note = true;
           this.terminerRoleNocturne(type);
         }
     }
+  }
+
+  // Tout ce qui se passe dans la partie, pour le panneau d’administration : cartes, pouvoirs restants, votes en cours.
+  suivi() {
+    const { type, acteurs, reponses } = this.tour;
+    const nom = id => this.nom(id) ?? '—';
+    const ivrogne = this.etatsRoles?.ivrogne;
+    const enfant = this.etatsRoles?.['enfant-sauvage'];
+    const etats = [
+      this.config.composition.sorciere && `Sorcière : soin ${this.potions.soin ? 'disponible' : 'utilisé'}, poison ${this.potions.poison ? 'disponible' : 'utilisé'}.`,
+      this.couple && `Couple : ${nom(this.couple[0])} et ${nom(this.couple[1])}.`,
+      this.config.composition.salvateur && `Gardien : protège ${nom(this.protection)} cette nuit, ${nom(this.derniereProtection)} la nuit précédente.`,
+      this.config.composition.ancien && `Ancien : ${this.ancienTouche ? 'déjà mordu une fois' : 'pas encore mordu'}.`,
+      this.config.composition.corbeau && (this.cibleCorbeau || this.marqueCorbeau) && `Corbeau : marque sur ${nom(this.marqueCorbeau ?? this.cibleCorbeau)}.`,
+      enfant?.modele && `Enfant sauvage : modèle ${nom(enfant.modele)}${enfant.transforme ? ', devenu Loup-Garou' : ''}.`,
+      ivrogne?.ivrogne && `Ivrogne : ${ivrogne.hote ? `dort chez ${nom(ivrogne.hote)}` : 'chez lui'} cette nuit.`,
+      this.maire && `Maire : ${nom(this.maire)}.`,
+    ].filter(Boolean);
+    return {
+      jour: this.jour, moment: this.moment ?? 'nuit', phase: type, gagnant: this.gagnant ?? null,
+      causesVisibles: this.config.causesVisibles === true,
+      joueurs: this.joueurs.map(({ id, nom }) => ({ nom, role: this.nomRole(this.cartes.get(id)), vivant: this.vivants.has(id) })),
+      etats,
+      enCours: acteurs.length && !this.tour.factice ? acteurs.map(acteur => ({
+        nom: nom(acteur), choix: !reponses.has(acteur) ? null : reponses.get(acteur) === votePasse ? 'passer'
+          : reponses.get(acteur) == null ? 'aucun choix' : typeof reponses.get(acteur) === 'string' ? nom(reponses.get(acteur)) : 'choisi',
+      })) : [],
+      chronique: this.chronique ?? [],
+    };
   }
 
   vue(id) {
@@ -601,8 +731,8 @@ export class Partie {
         return annonce;
       })
       : this.annonces;
-    const resultatElection = type === 'vote' ? annonces.findLast(a => a.id > this.tour.annonceDepuis &&
-      ['maire-elu', 'aucun-vote-maire'].includes(a.fichier))?.message : undefined;
+    const resultatElection = type === 'debat' ? annonces.findLast(a => a.id > this.tour.annonceDepuis &&
+      /^(?:maire-elu|aucun-vote-maire)/.test(a.fichier ?? ''))?.message : undefined;
     let temps;
     if (!choix || concerne || hote) {
       if (preparation) temps = { attente: true, duree, phase: numero, annonce: hote ? preparation.annonce : undefined };
@@ -618,6 +748,10 @@ export class Partie {
       annonceLue: annonceLue?.fichier,
       messageEliminationLue: /^(?:elimination|role)-/.test(annonceLue?.fichier ?? '') ? annonceLue.message : undefined,
       revelationVote: preparation ? undefined : this.revelationVote,
+      // Morts déjà annoncées ; la cause n’apparaît que si l’hôte l’a permis.
+      morts: (this.morts ?? []).filter(mort => !preparation || mort.annonce <= annoncesDiffusables)
+        .map(({ moment, nom, cause }) => ({ moment, nom, ...(this.config.causesVisibles && { cause: causesDeMort[cause] ?? cause }) })),
+      causesVisibles: this.config.causesVisibles === true,
       chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
         arrete: type === 'fin' ? debut : this.pauseDepuis },
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
@@ -633,7 +767,7 @@ export class Partie {
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],
       action: peutAgir ? {
         cibles: type === 'voyante' ? cibles.filter(cible => cible !== id) : cibles,
-        ...(this.peutPasserVote() && { peutPasserVote: true }),
+        ...(this.peutPasserVote(id) && { peutPasserVote: this.modePassage() }),
         ...(this.tour.revelationAttendue && { revelationAttendue: true }),
         ...(roles[type]?.vue && { info: roles[type].vue(this, id) }),
         ...(type === 'loups' && {
