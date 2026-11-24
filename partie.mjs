@@ -232,7 +232,8 @@ export class Partie {
       const regle = roles[role];
       if (regle.nuit.premiereNuitSeulement && this.jour !== 1) continue;
       const acteurs = [...this.vivants].filter(id => this.cartes.get(id) === role);
-      if (role === 'salvateur' && !acteurs.length) continue;
+      // Un Gardien mort n’est plus appelé une fois sa carte révélée à tous ; sinon l’appel factice garde le secret.
+      if (role === 'salvateur' && !acteurs.length && this.rolesRevelesMorts(role)) continue;
       const cibles = this.ciblesDeNuit(role, acteurs);
       const actif = acteurs.length && cibles.length &&
         !(role === 'sorciere' && !this.potions.poison && (!this.potions.soin || !this.victimeLoups)) &&
@@ -253,9 +254,6 @@ export class Partie {
     }
     for (const [, auReveil] of crochets('auReveil')) auReveil(this);
     this.annoncer('le-village-se-reveille');
-    if (this.ancienMorduCetteNuit) {
-      this.annoncer('ancien-survit', 'L’Ancien a survécu à la morsure des loups.');
-    }
     const causes = new Map();
     for (const [id, cause] of [[this.victimeLoups, 'loups'], [this.poison, 'poison'], ...(this.victimesNuit ?? [])]) {
       if (id && !causes.has(id)) causes.set(id, cause);
@@ -279,6 +277,12 @@ export class Partie {
   ajouterVictimeNuit(id, cause) {
     this.victimesNuit ??= [];
     if (this.vivants.has(id) && !this.victimesNuit.some(([victime]) => victime === id)) this.victimesNuit.push([id, cause]);
+  }
+
+  // Vrai si toutes les cartes de ce rôle sont mortes et montrées au village (annonce du rôle ou vote).
+  rolesRevelesMorts(role) {
+    const porteurs = [...this.cartes].filter(([, carte]) => carte === role).map(([id]) => id);
+    return porteurs.length > 0 && porteurs.every(id => !this.vivants.has(id) && this.mortsRevelees?.includes(id));
   }
 
   // Mémoire d’un rôle ajouté par fichier, sauvegardée avec la partie.
@@ -349,11 +353,13 @@ export class Partie {
   enlever(id, cause, victimesDirectes = []) {
     if (!this.vivants.delete(id)) return;
     const role = this.cartes.get(id);
+    if (this.config.annoncesEliminations || cause === 'vote') (this.mortsRevelees ??= []).push(id);
     if (this.config.annoncesEliminations) {
       for (const { fichier, message } of annonceElimination(this.nom(id), role)) this.annoncer(fichier, message);
     }
     for (const [, surMort] of crochets('surMort')) surMort(this, id, cause);
-    if (role === 'chasseur' && ['vote', 'loups'].includes(cause)) {
+    // Le Chasseur tire quelle que soit la cause de sa mort : loups, vote, poison ou chagrin.
+    if (role === 'chasseur') {
       this.effets.unshift({ type: 'chasseur', acteur: id });
     }
     if (this.maire === id) {
@@ -519,7 +525,6 @@ export class Partie {
       }
       case 'corbeau':
         this.cibleCorbeau = choix;
-        if (choix && !this.config.discret) this.annoncer('cri-corbeau');
         this.terminerRoleNocturne(type);
         break;
       case 'election': {

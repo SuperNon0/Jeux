@@ -4,7 +4,7 @@ export default {
   nom: 'Chasseur',
   camp: 'village',
   classique: true,
-  pouvoir: 'Si les loups ou le vote t’éliminent, tu emportes aussitôt une personne avec toi.',
+  pouvoir: 'Quand tu meurs, quelle qu’en soit la cause, tu emportes aussitôt une personne avec toi.',
   art: { image: 'sorciere-et-chasseur.png', taille: '200% 100%', position: 'right top' },
   phrases: {
     role: 'Son rôle était Chasseur.',

@@ -353,7 +353,7 @@ test('le Salvateur protège avant que l’Ancien ou la Sorcière n’intervienne
   jouer(partie, 'Élie', 'Camille');
   assert.equal(partie.vue('Diane').action.soin, false);
   jouer(partie, 'Diane', { soin: false, poison: null });
-  assert.ok(!partie.annonces.some(a => a.fichier === 'ancien-survit'));
+  assert.ok(!partie.ancienTouche);
   jouer(partie, 'Alice');
   jouer(partie, 'Alice', 'Félix');
   finirVoteAvecAbstentions(partie);
@@ -363,7 +363,10 @@ test('le Salvateur protège avant que l’Ancien ou la Sorcière n’intervienne
   jouer(partie, 'Élie', 'Camille');
   assert.equal(partie.vue('Diane').action.soin, false);
   jouer(partie, 'Diane', { soin: false, poison: null });
-  assert.equal(partie.annonces.filter(a => a.fichier === 'ancien-survit').length, 1);
+  assert.ok(partie.ancienTouche && partie.vivants.has('Camille'));
+  assert.ok(!partie.annonces.some(a => a.fichier === 'ancien-survit'));
+  assert.match(partie.vue('Camille').infoRole, /survécu/);
+  assert.equal(partie.vue('Alice').infoRole, undefined);
   jouer(partie, 'Alice');
   jouer(partie, 'Alice', 'Gaëlle');
   finirVoteAvecAbstentions(partie);
@@ -374,7 +377,6 @@ test('le Salvateur protège avant que l’Ancien ou la Sorcière n’intervienne
   assert.equal(partie.vue('Diane').action.victime, 'Camille');
   jouer(partie, 'Diane', { soin: false, poison: null });
   assert.ok(!partie.vue('Alice').vivants.includes('Camille'));
-  assert.equal(partie.annonces.filter(a => a.fichier === 'ancien-survit').length, 1);
 });
 
 test('la marque du Corbeau compte au premier vote d’élimination uniquement', () => {
@@ -399,7 +401,7 @@ test('la marque du Corbeau compte au premier vote d’élimination uniquement', 
   assert.equal(partie.vue('Alice').marqueCorbeau, null);
 });
 
-test('le cri du Corbeau suit une action validée, avant le réveil', () => {
+test('le narrateur ne trahit ni le choix du Corbeau ni la morsure de l’Ancien', () => {
   const cartes = { Alice: 'villageois', Bastien: 'corbeau', Camille: 'ancien', Diane: 'loups', Élie: 'villageois' };
   const partie = partieAvecRoles(cartes);
   jouer(partie, 'Diane', 'Camille');
@@ -408,8 +410,8 @@ test('le cri du Corbeau suit une action validée, avant le réveil', () => {
   jouer(partie, 'Bastien', 'Élie');
   const annonces = partie.annonces.map(a => a.fichier);
   const index = annonces.indexOf('corbeau');
-  assert.deepEqual(annonces.slice(index, index + 8), [
-    'corbeau', 'cri-corbeau', 'fin-corbeau', 'le-village-se-reveille', 'ancien-survit', 'nuit-sans-victime', 'marque-corbeau', 'debut-debat',
+  assert.deepEqual(annonces.slice(index, index + 6), [
+    'corbeau', 'fin-corbeau', 'le-village-se-reveille', 'nuit-sans-victime', 'marque-corbeau', 'debut-debat',
   ]);
   const absence = partieAvecRoles(cartes);
   jouer(absence, 'Diane', 'Camille');
@@ -1106,10 +1108,9 @@ test('la Voyante morte est appelée en narration classique, jamais en mode discr
   assert.equal(discret.tour.type, 'loups');
 });
 
-test('le Gardien ne reçoit plus d’appel après sa mort', () => {
-  const partie = partieAvecRoles({
-    Alice: 'villageois', Camille: 'villageois', Diane: 'loups', Élie: 'villageois', Félix: 'salvateur',
-  });
+test('le Gardien mort n’est plus appelé une fois sa carte annoncée', () => {
+  const cartes = { Alice: 'villageois', Camille: 'villageois', Diane: 'loups', Élie: 'villageois', Félix: 'salvateur' };
+  const partie = partieAvecRoles(cartes, { annoncesEliminations: true });
   assert.equal(partie.annonces.at(-1).fichier, 'salvateur');
   jouer(partie, 'Félix', 'Camille');
   assert.deepEqual(partie.annonces.slice(-2).map(a => a.fichier), ['fin-salvateur', 'loups']);
@@ -1122,8 +1123,44 @@ test('le Gardien ne reçoit plus d’appel après sa mort', () => {
   jouer(partie, 'Alice');
   assert.equal(partie.tour.type, 'loups');
   jouer(partie, 'Diane', 'Élie');
-  assert.deepEqual(partie.annonces.slice(debut).map(a => a.fichier),
-    ['le-village-sendort', 'loups', 'fin-loups', 'le-village-se-reveille', 'nuit-avec-victimes', 'debut-debat']);
+  assert.deepEqual(partie.annonces.slice(debut, debut + 3).map(a => a.fichier), ['le-village-sendort', 'loups', 'fin-loups']);
+});
+
+test('le Gardien tué sans annonce de son rôle reste appelé pour la forme, mais plus après un vote', () => {
+  const cartes = { Alice: 'villageois', Camille: 'villageois', Diane: 'loups', Élie: 'villageois', Félix: 'salvateur', Gabi: 'villageois' };
+  const nuit = partieAvecRoles(cartes);
+  jouer(nuit, 'Félix', 'Camille');
+  jouer(nuit, 'Diane', 'Félix');
+  jouer(nuit, 'Alice');
+  finirVoteAvecAbstentions(nuit);
+  jouer(nuit, 'Alice');
+  assert.equal(nuit.tour.type, 'salvateur');
+  assert.equal(nuit.tour.factice, true);
+
+  const vote = partieAvecRoles(cartes);
+  jouer(vote, 'Félix', null);
+  jouer(vote, 'Diane', 'Camille');
+  jouer(vote, 'Alice');
+  for (const id of vote.tour.acteurs) jouer(vote, id, 'Félix');
+  assert.ok(!vote.vivants.has('Félix'));
+  jouer(vote, 'Alice');
+  assert.equal(vote.tour.type, 'loups');
+});
+
+test('le Chasseur tire aussi quand il meurt de chagrin ou empoisonné', () => {
+  const amour = partieAvecRoles({ Alice: 'villageois', Bastien: 'chasseur', Camille: 'villageois', Diane: 'loups', Élie: 'cupidon', Félix: 'villageois' });
+  jouer(amour, 'Élie', ['Bastien', 'Camille']);
+  assert.match(amour.vue('Élie').infoRole, /Bastien et Camille/);
+  jouer(amour, 'Diane', 'Camille');
+  assert.equal(amour.tour.type, 'chasseur');
+  jouer(amour, 'Bastien', 'Diane');
+  assert.equal(amour.gagnant, 'village');
+
+  const poison = partieAvecRoles({ Alice: 'villageois', Bastien: 'chasseur', Camille: 'villageois', Diane: 'loups', Élie: 'sorciere', Félix: 'villageois' });
+  jouer(poison, 'Diane', 'Camille');
+  jouer(poison, 'Élie', { potion: 'soin', utiliser: false });
+  jouer(poison, 'Élie', { potion: 'poison', cible: 'Bastien' });
+  assert.equal(poison.tour.type, 'chasseur');
 });
 
 test('une Sorcière sans potion est appelée pour la forme', () => {

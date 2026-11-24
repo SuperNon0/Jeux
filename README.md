@@ -110,7 +110,7 @@ Ouvre `http://ADRESSE-IP-DE-LA-VM:3000` depuis un téléphone sur le même rése
 - L’élection du maire est activée par défaut. Après le premier débat, la narration appelle le village à élire son maire. À l’issue de l’élection, le nom du maire élu s’affiche sur tous les écrans, puis les annonces de fin de débat et d’ouverture du vote précèdent le bulletin d’élimination.
 - Le vote d’élimination se clôt après réception de tous les bulletins ou à la fin du minuteur. Chaque joueur peut retourner la carte de la personne éliminée. L’hôte confirme le passage à la nuit avant l’annonce « Le village s’endort ».
 - Au premier tour du premier vote d’élimination, **Passer le vote** exige plus de la moitié des joueurs encore en jeu, soit trois voix sur cinq. Chaque joueur compte une fois pour cette décision. Si le seuil n’est pas atteint, les bulletins pour passer comptent comme des abstentions.
-- Quand le Chasseur est éliminé par le vote ou par les loups, il tire aussitôt, avant le test de victoire. Tué la nuit, son choix s’ouvre au réveil, avant le débat. Si sa mort élimine déjà le dernier loup, le village gagne sans tir.
+- Quand le Chasseur meurt, quelle qu’en soit la cause (vote, loups, poison ou chagrin d’amoureux), il tire aussitôt, avant le test de victoire. Tué la nuit, son choix s’ouvre au réveil, avant le débat. Si sa mort élimine déjà le dernier loup, le village gagne sans tir.
 - Après sa révélation, la Voyante a 20 secondes pour confirmer qu’elle a vu la carte, puis la nuit continue.
 - La Sorcière décide d’abord si elle utilise son soin quand il est disponible. Elle peut ensuite choisir une cible pour son poison ou le garder. Chaque choix dispose de son propre chronomètre.
 - Après actualisation, le même navigateur retrouve automatiquement sa session. Si elle est perdue, ouvre à nouveau le QR et demande à reprendre ton ancien pseudo. L’hôte doit valider la demande.
@@ -128,7 +128,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 | Enfant sauvage | Choisit un modèle la première nuit. Si ce modèle meurt, il devient Loup-Garou en secret et rejoint la meute dès la nuit suivante. |
 | Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Au réveil, le rôle de son hôte s’affiche sur son écran de partie et reste consultable sous sa carte. Absent, il échappe à une attaque contre sa maison. Il meurt s’il dort chez un Loup-Garou ou si la meute dévore son hôte. |
 | Petite Fille | N’est jamais appelée et n’agit pas sur son téléphone. Elle a le droit d’entrouvrir les yeux la nuit, surtout pendant le tour des loups, au risque d’être surprise. |
-| Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
+| Ancien | Survit à la première attaque des loups qui l’atteint. Le narrateur ne l’annonce pas : seul l’Ancien l’apprend sur son téléphone. Le poison ou un vote peuvent l’éliminer. |
 | Corbeau | Peut marquer un autre joueur chaque nuit, ou ne marquer personne. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 
 ## Retrouver un salon
@@ -149,18 +149,18 @@ Les annonces utilisent la voix française Tom de Piper et un niveau sonore harmo
 
 Dans les nouveaux salons, une élimination confirmée s’annonce en deux pistes : `deces-<prénom>.mp3` (« Noë a perdu la vie. ») puis `role-<rôle>.mp3` (« Son rôle était Corbeau. »). Pour un bot ou un prénom sans piste, seule la piste du rôle est jouée. Toutes les phrases figurent dans le [catalogue des annonces](public/annonces.json).
 
-En narration classique, le Gardien est appelé tant qu’il est en vie. Les autres rôles de nuit qui sont morts ou sans pouvoir sont appelés pour la forme, puis se rendorment après 8 à 14 secondes. Le mode discret ne fait aucun appel individuel.
+En narration classique, le Gardien mort n’est plus appelé dès que sa carte a été montrée à tous (annonce du rôle ou vote). Tant que sa mort reste secrète, il est appelé pour la forme comme les autres rôles. Les rôles de nuit qui sont morts ou sans pouvoir sont appelés pour la forme, puis se rendorment après 8 à 14 secondes. Le mode discret ne fait aucun appel individuel.
 
 | Nom du fichier | Phrase ou son |
 | --- | --- |
 | `amoureux-lies.mp3` | Les amoureux découvrent leur lien sur leur téléphone. |
-| `ancien-survit.mp3` | L’Ancien a survécu à la morsure des loups. |
+| `ancien-survit.mp3` | L’Ancien a survécu à la morsure des loups. (Plus utilisée : l’information reste privée.) |
 | `aucun-vote-elimination.mp3` | Aucun vote n’a été reçu. Personne n’est éliminé. |
 | `aucun-vote-maire.mp3` | Aucun vote n’a été reçu pour l’élection du maire. |
 | `chasseur.mp3` | Le Chasseur a été éliminé. Il doit choisir une personne à emporter avec lui. |
 | `compte-a-rebours.mp3` | La partie commence dans dix secondes. |
 | `corbeau.mp3` | Le Corbeau se réveille. Choisis la personne qui recevra deux voix contre elle au prochain vote d’élimination. |
-| `cri-corbeau.mp3` | Croassement après la validation de la cible du Corbeau, en narration classique. |
+| `cri-corbeau.mp3` | Croassement du Corbeau. (Plus utilisée : son silence trahissait un tour passé.) |
 | `cupidon.mp3` | Cupidon se réveille. Choisis deux personnes qui seront liées pour toute la partie. |
 | `debut-debat.mp3` | Le débat commence. À vous de parler. |
 | `departage-maire.mp3` | Le maire doit départager les joueurs arrivés en tête. |

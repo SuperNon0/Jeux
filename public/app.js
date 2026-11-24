@@ -767,9 +767,6 @@ function vuePhase(p) {
   const bulletinSimple = interfaceJoueur() && p.phase === 'vote' && p.action;
   const derniere = p.annonces.findLast(a => a.message && (p.phase === 'debat' ? a.fichier?.startsWith('nuit-') :
     p.phase === 'attenteNuit' ? ['resultat-vote', 'aucun-vote-elimination', 'vote-passe'].includes(a.fichier) : false));
-  const ancien = p.phase === 'debat'
-    ? p.annonces.slice(p.annonces.findLastIndex(a => a.fichier === 'le-village-se-reveille')).find(a => a.fichier === 'ancien-survit')
-    : null;
   const animateurPresent = etat.joueurs.some(j => j.enLigne && [etat.hoteId, etat.cohoteId].includes(j.id));
   return `<section class="panneau phase">
     <div class="phase-entete"><span class="embleme">${icone(ic, 24)}</span><div>
@@ -777,7 +774,6 @@ function vuePhase(p) {
     </div>
     ${p.resultatElection ? `<p class="notice">${icone('list', 16)}${echapper(p.resultatElection)}</p>` : ''}
     ${derniere && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(derniere.message)}</div>` : ''}
-    ${ancien ? `<div class="notice">${icone('shield', 16)}${echapper(ancien.message)}</div>` : ''}
     ${p.marqueCorbeau && !bulletinSimple ? `<div class="notice">${icone('list', 16)}${echapper(etiquette(p.marqueCorbeau))} reçoit deux voix au premier vote d’élimination.</div>` : ''}
     ${lienAmoureux(p)}
     ${progression ? `<div class="progression"><div><span>${p.phase === 'distribution' ? 'Joueurs prêts' : 'Votes reçus'}</span>
