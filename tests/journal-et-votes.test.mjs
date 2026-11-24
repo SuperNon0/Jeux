@@ -99,3 +99,25 @@ test('les phrases du vote, du chagrin et du Chasseur disent le prénom sans rép
   assert.deepEqual(fin.slice(fin.indexOf('tir-chasseur-marine'), fin.indexOf('tir-chasseur-marine') + 4),
     ['tir-chasseur-marine', 'role-villageois', 'mort-amoureux-clara', 'role-villageois']);
 });
+
+test('les morts voient le suivi de la partie, pas les vivants', () => {
+  const p = partie(village);
+  jouer(p, 'Maël', 'Clara');
+  jouer(p, 'Julien', { soin: false, poison: null });
+  assert.equal(p.vue('Noë').suivi, undefined);
+  assert.equal(p.vue('Clara').suivi.joueurs.find(j => j.nom === 'Maël').role, 'Loup-Garou');
+});
+
+test('un maire mort qui ne désigne personne à temps laisse le sort choisir son successeur', () => {
+  const p = partie(village, { maire: true });
+  jouer(p, 'Maël', 'Clara');
+  jouer(p, 'Julien', { soin: false, poison: null });
+  for (const id of p.tour.acteurs) jouer(p, id, 'Noë');
+  jouer(p, 'Noë');
+  for (const id of ['Noë', 'Julien', 'Marine']) jouer(p, id, 'Noë');
+  jouer(p, 'Maël', 'Noë');
+  assert.equal(p.tour.type, 'succession');
+  p.passer(['Noë']);
+  assert.ok(p.vivants.has(p.maire));
+  assert.ok(p.annonces.some(a => a.fichier === 'tirage-au-sort'));
+});

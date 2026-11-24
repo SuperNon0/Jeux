@@ -686,6 +686,9 @@ function journal(p) {
         <strong>${echapper(m.nom)} a perdu la vie</strong><small class="muted">${echapper(m.moment)}${m.cause ? ` · ${echapper(m.cause)}` : ''}</small></div></li>`).join('')}</ol>`
         : '<p class="soft">Personne n’est mort pour le moment.</p>'}
       ${etat.hote ? `<p class="soft">${p.causesVisibles ? 'Tous les joueurs voient comment chaque personne est morte.' : 'Les joueurs ne voient pas la cause des morts.'}</p>` : ''}</section>
+    ${p.suivi ? `<section class="panneau"><h2 class="ttl">Suivi de la partie ${aide('suivi-morts', 'Suivi de la partie',
+      'Tu es mort : tu vois maintenant toutes les cartes et tout ce qui se passe. Ne dis rien aux joueurs encore en vie.')}</h2>
+      ${suiviPartie({ code, partie: p.suivi }, false)}</section>` : ''}
     <section class="panneau"><h2 class="ttl">Journal du village</h2>
       ${evenements.length ? `<ol class="journal-liste">${evenements.map(a => `<li>${icone('dot', 18)}<span>${echapper(a.message)}</span></li>`).join('')}</ol>`
       : '<p class="soft">Les événements apparaîtront au fil de la partie.</p>'}</section></div>`;
@@ -952,15 +955,15 @@ function panneauAdmin() {
 }
 
 // Tableau du meneur : cartes, pouvoirs restants, choix en cours et chronique complète de la partie.
-function suiviPartie({ code: salle, partie: p }) {
+function suiviPartie({ code: salle, partie: p }, meneur = true) {
   if (!p) return '<p class="soft">Aucune partie en cours dans ce salon.</p>';
   const nomsPhases = { debat: 'Débat', election: 'Élection du maire', vote: 'Vote d’élimination', attenteNuit: 'Fin du jour',
     fin: 'Partie terminée', distribution: 'Distribution des cartes', lancement: 'Lancement' };
   const phase = nomsPhases[p.phase] ?? (roles[p.phase]?.nomGroupe ?? roles[p.phase]?.nom ?? p.phase);
   return `<div class="pile suivi-partie">
-    <div class="actions">${action('Actualiser', 'refresh', 'actualiser-suivi', 'gh', `data-code="${salle}"`)}
+    ${meneur ? `<div class="actions">${action('Actualiser', 'refresh', 'actualiser-suivi', 'gh', `data-code="${salle}"`)}
       ${action(p.causesVisibles ? 'Masquer les causes aux joueurs' : 'Montrer les causes aux joueurs', p.causesVisibles ? 'lock' : 'eye',
-        'causes-admin', 'gh', `data-code="${salle}" data-visibles="${p.causesVisibles ? 'non' : 'oui'}"`)}</div>
+        'causes-admin', 'gh', `data-code="${salle}" data-visibles="${p.causesVisibles ? 'non' : 'oui'}"`)}</div>` : ''}
     <p class="notice">${icone(p.moment === 'nuit' ? 'moon' : 'sun', 18)}${p.moment === 'nuit' ? 'Nuit' : 'Jour'} ${p.jour} · ${echapper(phase)}</p>
     <section><h3 class="ttl">Joueurs</h3><ul class="journal-liste">${p.joueurs.map(j => `<li>${icone(j.vivant ? 'dot' : 'x', 18)}
       <div><strong>${echapper(j.nom)}</strong><small class="muted">${echapper(j.role)}${j.vivant ? '' : ' · mort'}</small></div></li>`).join('')}</ul></section>

@@ -485,8 +485,8 @@ test('les actions du Chasseur et du maire expirent sans lancer la nuit', () => {
   assert.equal(partie.vue('Bastien').temps.choix, true);
   partie.actualiserTemps(partie.tour.echeance);
   assert.equal(partie.vue('Alice').phase, 'debat');
-  assert.equal(partie.maire, null);
-  assert.ok(!partie.annonces.some(a => a.fichier === 'tir-chasseur'));
+  assert.ok(partie.vivants.has(partie.maire));
+  assert.ok(!partie.annonces.some(a => a.fichier.startsWith('tir-chasseur')));
 
   partie.maire = 'Alice';
   jouer(partie, 'Alice');

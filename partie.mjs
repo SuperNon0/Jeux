@@ -156,7 +156,15 @@ export class Partie {
     if (['cupidon', 'voyante', 'sorciere', 'salvateur', 'corbeau', ...rolesACrochets].includes(type) && roles[type]?.nuit) {
       this.terminerRoleNocturne(type);
     }
-    else if (type === 'chasseur' || type === 'succession') this.resoudreEffets();
+    else if (type === 'chasseur') this.resoudreEffets();
+    // Le maire mourant n’a pas désigné de successeur à temps : le sort choisit parmi les vivants.
+    else if (type === 'succession') {
+      if (this.vivants.size) {
+        this.annoncer('tirage-au-sort');
+        this.elire(tirerAuSort([...this.vivants]), true);
+      }
+      this.resoudreEffets();
+    }
     else if (type === 'departage') this.eliminerAuVote(tirerAuSort(this.tour.cibles));
     else if (type === 'loups') {
       for (const id of absents) if (!reponses.has(id)) reponses.set(id, null);
@@ -752,6 +760,8 @@ export class Partie {
       morts: (this.morts ?? []).filter(mort => !preparation || mort.annonce <= annoncesDiffusables)
         .map(({ moment, nom, cause }) => ({ moment, nom, ...(this.config.causesVisibles && { cause: causesDeMort[cause] ?? cause }) })),
       causesVisibles: this.config.causesVisibles === true,
+      // Les joueurs morts suivent toute la partie, comme le meneur.
+      suivi: this.jour && !this.vivants.has(id) ? this.suivi() : undefined,
       chronoPartie: { debut: this.debutPartie, suspendu: this.tempsSuspendu,
         arrete: type === 'fin' ? debut : this.pauseDepuis },
       peutProlonger: type === 'debat' && peutAgir && Boolean(this.tour.echeance),
