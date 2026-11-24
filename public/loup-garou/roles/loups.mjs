@@ -13,12 +13,6 @@ export default {
     return partie.etatsRoles?.['enfant-sauvage']?.transforme === joueur
       ? 'Ton modèle est mort : tu as rejoint la meute. Tu gagnes désormais avec les Loups-Garous.' : '';
   },
-  // Petite Fille repérée en train d’espionner : la meute voit son prénom pendant ce tour.
-  vue(partie) {
-    const reperee = partie.etatsRoles?.['petite-fille']?.reperee;
-    return reperee?.nuit === partie.jour
-      ? `Vous avez repéré la Petite Fille en train de vous espionner : c’est ${partie.nom(reperee.joueur)} !` : '';
-  },
   phrases: {
     appel: 'Les Loups-Garous se réveillent. Choisissez votre cible.',
     fin: 'Les Loups-Garous se rendorment.',

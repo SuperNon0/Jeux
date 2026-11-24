@@ -274,13 +274,6 @@ export class Partie {
     });
   }
 
-  // Rôle qui agit pendant la phase d’un autre, sans être appelé (Petite Fille pendant les loups).
-  vueEspion(id) {
-    const regle = roles[this.cartes.get(id)];
-    if (!regle?.espion || regle.espion.phase !== this.tour.type || this.pause || this.tour.preparation) return undefined;
-    return regle.peutEspionner(this, id) ? { numero: this.numero, bouton: regle.espion.bouton } : { fait: true };
-  }
-
   // Un rôle ajouté par fichier peut faire mourir quelqu’un en plus pendant la nuit (dans auReveil).
   ajouterVictimeNuit(id, cause) {
     this.victimesNuit ??= [];
@@ -412,15 +405,6 @@ export class Partie {
     const { type, acteurs, cibles, reponses } = this.tour;
     if (this.pause) throw new Error('La partie est en pause.');
     if (this.tour.preparation) throw new Error('Attends la fin de l’annonce.');
-    const espion = roles[this.cartes.get(id)]?.espion;
-    if (choix === 'espionner' && espion) {
-      const regle = roles[this.cartes.get(id)];
-      if (numero !== this.numero || espion.phase !== type || !regle.peutEspionner(this, id)) {
-        throw new Error('Tu ne peux pas espionner maintenant.');
-      }
-      regle.espionner(this, id);
-      return;
-    }
     if (numero !== this.numero || !acteurs.includes(id) || (reponses.has(id) && type !== 'loups')) {
       throw new Error('Cette action n’est plus disponible.');
     }
@@ -618,7 +602,6 @@ export class Partie {
       aRepondu: !nuit && reponses.has(id),
       bilan: type === 'fin' && !preparation ? Object.fromEntries(this.cartes) : undefined,
       infoRole: roles[this.cartes.get(id)]?.info?.(this, id),
-      espion: this.vueEspion(id),
       role: this.cartes.get(id), amoureux: this.nom(this.partenaireAmoureux(id)), historique: this.historiques.get(id),
       allies: this.cartes.get(id) === 'loups'
         ? this.joueurs.filter(joueur => joueur.id !== id && this.cartes.get(joueur.id) === 'loups').map(joueur => joueur.nom) : [],

@@ -126,7 +126,7 @@ Active ces rôles dans **Personnaliser les règles** à la création du salon. L
 | Gardien | Protège un joueur de l’attaque des loups, y compris lui-même, avec une cible différente d’une nuit consécutive à l’autre. Il peut passer son tour. Son identifiant technique reste `salvateur`. |
 | Enfant sauvage | Choisit un modèle la première nuit. Si ce modèle meurt, il devient Loup-Garou en secret et rejoint la meute dès la nuit suivante. |
 | Ivrogne | Chaque nuit, avant les loups, va dormir chez quelqu’un ou reste chez lui, jamais deux nuits de suite chez la même personne. Au réveil, il découvre le rôle de son hôte. Absent, il survit à une attaque des loups. Si les loups dévorent son hôte, il meurt avec lui. |
-| Petite Fille | N’est jamais appelée. Pendant le tour des loups, peut les espionner une fois par nuit : elle voit leur cible et l’initiale d’un loup. Une fois sur trois, les loups voient son prénom. |
+| Petite Fille | N’est jamais appelée et n’agit pas sur son téléphone. Elle a le droit d’entrouvrir les yeux la nuit, surtout pendant le tour des loups, au risque d’être surprise. |
 | Ancien | Survit à la première attaque des loups qui l’atteint. Son pouvoir est passif et le poison ou un vote peuvent l’éliminer. |
 | Corbeau | Peut marquer un autre joueur chaque nuit, ou ne marquer personne. Si cette personne survit, la marque est annoncée le lendemain et ajoute deux voix contre elle au premier tour du vote d’élimination. |
 
