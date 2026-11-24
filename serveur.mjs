@@ -681,7 +681,7 @@ async function lire(req) {
 }
 
 function json(res, status, objet) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Jeux-Version': version });
   res.end(JSON.stringify(objet));
 }
 

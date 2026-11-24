@@ -8,6 +8,8 @@ const feuille = document.querySelector('#feuille');
 const avis = document.querySelector('#avis');
 const nomination = document.querySelector('#nomination');
 const versionChargee = new URL(import.meta.url).searchParams.get('v');
+let rechargement = false;
+let versionVueLe = Date.now();
 
 const zones = { accueil: ['Accueil', 'home'], salons: ['Mes salons', 'users'], partie: ['Partie', 'moon'],
   carte: ['Ma carte', 'layers'], journal: ['Journal', 'list'], admin: ['Administration', 'shield'], plus: ['Plus', 'dots'] };
@@ -168,6 +170,8 @@ async function requete(adresse, options) {
   let reponse;
   try { reponse = await fetch(adresse, { ...options, signal: AbortSignal.timeout(options?.method === 'PUT' ? 30_000 : 8000) }); }
   catch { throw new Error('Connexion interrompue. Réessaie dans un instant.'); }
+  versionVueLe = Date.now();
+  verifierVersion(reponse.headers.get('X-Jeux-Version'));
   const resultat = await reponse.json().catch(() => null);
   if (!reponse.ok || !resultat) {
     throw Object.assign(new Error(resultat?.erreur ?? 'Le serveur ne répond pas correctement.'), { status: reponse.status });
@@ -270,15 +274,19 @@ function pisteSuivante() {
   }
 }
 
+// Après une mise à jour du serveur, chaque page (admin, accueil, téléphones) se recharge d’elle-même.
+function verifierVersion(version) {
+  if (!versionChargee || !version || version === versionChargee || rechargement) return Boolean(rechargement);
+  const adresse = new URL(location.href);
+  if (adresse.searchParams.get('mise-a-jour') === version) return false;
+  adresse.searchParams.set('mise-a-jour', version);
+  rechargement = true;
+  location.replace(adresse.href);
+  return true;
+}
+
 function actualiser(nouveau) {
-  if (versionChargee && nouveau.version && nouveau.version !== versionChargee) {
-    const adresse = new URL(location.href);
-    if (adresse.searchParams.get('mise-a-jour') !== nouveau.version) {
-      adresse.searchParams.set('mise-a-jour', nouveau.version);
-      location.replace(adresse.href);
-      return;
-    }
-  }
+  if (verifierVersion(nouveau.version)) return;
   if (nouveau.son) configurationSon = nouveau.son;
   decalageHorloge = (nouveau.horloge ?? Date.now()) - Date.now();
   if (!etat && nouveau.hote && !son) declarerNarration(false);
@@ -1864,6 +1872,15 @@ document.addEventListener('click', event => {
   });
 });
 
+{
+  const adresse = new URL(location.href);
+  const installee = adresse.searchParams.get('mise-a-jour');
+  if (installee) {
+    adresse.searchParams.delete('mise-a-jour');
+    history.replaceState(history.state, '', adresse.href);
+    if (installee === versionChargee) setTimeout(() => afficherAvis(`Site mis à jour en version ${installee}.`, 6000));
+  }
+}
 afficher();
 synchroniser();
 actualiserListe();
@@ -1877,6 +1894,8 @@ setInterval(() => {
   synchroniser();
   if (['accueil', 'salons'].includes(zone) && Date.now() - actualiseLe > 10_000) actualiserListe();
   if (zone === 'admin' && maintenanceEnCours() && !envoi) chargerAdmin();
+  // Une page sans salon ni admin ouverts interroge quand même le serveur pour repérer une nouvelle version.
+  if (Date.now() - versionVueLe > 20_000) requete('/api/configuration').catch(() => {});
 }, 1000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
